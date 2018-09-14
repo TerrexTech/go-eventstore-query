@@ -1,0 +1,6 @@
+.history
+.vagrant
+.vscode
+vendor*
+.vendor*
+debug.test
