@@ -8,8 +8,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/TerrexTech/uuuid"
+
 	"github.com/TerrexTech/go-commonutils/commonutil"
-	cql "github.com/gocql/gocql"
 	"github.com/TerrexTech/go-eventstore-models/bootstrap"
 	"github.com/TerrexTech/go-eventstore-models/model"
 	"github.com/TerrexTech/go-kafkautils/consumer"
@@ -41,7 +42,7 @@ var _ = Describe("EventQuery", func() {
 			Expect(err).ToNot(HaveOccurred())
 
 			// Add some test-data
-			uuid, err := cql.RandomUUID()
+			uuid, err := uuuid.NewV4()
 			Expect(err).ToNot(HaveOccurred())
 
 			eventTable, err := bootstrap.Event()
@@ -49,9 +50,9 @@ var _ = Describe("EventQuery", func() {
 			mockEvent := &model.Event{
 				AggregateID: 1,
 				Version:     10,
-				YearBucket:  2019,
-				Data:        "test",
-				UserID:      3,
+				YearBucket:  2018,
+				Data:        []byte("test"),
+				UserUUID:    uuid,
 				Timestamp:   time.Now(),
 				UUID:        uuid,
 				Action:      "insert",
@@ -70,14 +71,13 @@ var _ = Describe("EventQuery", func() {
 			query := &model.EventMeta{
 				AggregateID:      1,
 				AggregateVersion: 20,
-				YearBucket:       2019,
 			}
 			err = <-eventMetaTable.AsyncInsert(query)
 			Expect(err).ToNot(HaveOccurred())
 
 			brokers = commonutil.ParseHosts(os.Getenv("KAFKA_BROKERS"))
 			consumerGroupName = "test-consumer"
-			consumerTopic := os.Getenv("KAFKA_REQUEST_SINK_TOPIC")
+			consumerTopic := os.Getenv("KAFKA_REQUEST_TOPIC")
 
 			config := &producer.Config{
 				KafkaBrokers: *brokers,
@@ -90,7 +90,7 @@ var _ = Describe("EventQuery", func() {
 			mockEventStoreQuery := &model.EventStoreQuery{
 				AggregateID:      1,
 				AggregateVersion: 1,
-				YearBucket:       2019,
+				YearBucket:       mockEvent.YearBucket,
 			}
 			responseTopic = fmt.Sprintf(
 				"%s.%d",
@@ -105,7 +105,7 @@ var _ = Describe("EventQuery", func() {
 			metaData := model.EventMeta{
 				AggregateVersion: metaAggVersion,
 				AggregateID:      mockEventStoreQuery.AggregateID,
-				YearBucket:       mockEventStoreQuery.YearBucket,
+				PartitionKey:     0,
 			}
 			err = <-metaTable.AsyncInsert(metaData)
 			Expect(err).ToNot(HaveOccurred())

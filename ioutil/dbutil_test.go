@@ -6,6 +6,8 @@ import (
 	"reflect"
 	"time"
 
+	"github.com/TerrexTech/uuuid"
+
 	csndra "github.com/TerrexTech/go-cassandrautils/cassandra"
 	"github.com/TerrexTech/go-commonutils/commonutil"
 	"github.com/TerrexTech/go-eventstore-models/bootstrap"
@@ -106,7 +108,6 @@ var _ = Describe("DBUtil", func() {
 			eventMeta := &model.EventMeta{
 				AggregateID:      aggID,
 				AggregateVersion: 43,
-				YearBucket:       2019,
 			}
 			err := <-eventMetaTable.AsyncInsert(eventMeta)
 			Expect(err).ToNot(HaveOccurred())
@@ -121,9 +122,8 @@ var _ = Describe("DBUtil", func() {
 			query := &model.EventStoreQuery{
 				AggregateID:      aggID,
 				AggregateVersion: 43,
-				YearBucket:       2019,
 			}
-			ver, err := dbUtil.GetAggMetaVersion(query)
+			ver, err := dbUtil.GetAggMetaVersion(0, query)
 			Expect(err).ToNot(HaveOccurred())
 
 			Expect(ver).To(Equal(query.AggregateVersion))
@@ -132,21 +132,10 @@ var _ = Describe("DBUtil", func() {
 		It("should return error if AggregateID is not specified", func() {
 			query := &model.EventStoreQuery{
 				AggregateVersion: 43,
-				YearBucket:       2019,
 			}
-			ver, err := dbUtil.GetAggMetaVersion(query)
+			ver, err := dbUtil.GetAggMetaVersion(0, query)
 			Expect(err).To(HaveOccurred())
-			Expect(ver).To(Equal(int64(0)))
-		})
-
-		It("should return error if YearBucket is not specified", func() {
-			query := &model.EventStoreQuery{
-				AggregateID:      aggID,
-				AggregateVersion: 98,
-			}
-			ver, err := dbUtil.GetAggMetaVersion(query)
-			Expect(err).To(HaveOccurred())
-			Expect(ver).To(Equal(int64(0)))
+			Expect(ver).To(Equal(int64(-1)))
 		})
 
 		It(
@@ -155,11 +144,10 @@ var _ = Describe("DBUtil", func() {
 				query := &model.EventStoreQuery{
 					AggregateID:      43,
 					AggregateVersion: 98,
-					YearBucket:       2019,
 				}
-				ver, err := dbUtil.GetAggMetaVersion(query)
+				ver, err := dbUtil.GetAggMetaVersion(0, query)
 				Expect(err).To(HaveOccurred())
-				Expect(ver).To(Equal(int64(0)))
+				Expect(ver).To(Equal(int64(-1)))
 			},
 		)
 
@@ -169,21 +157,20 @@ var _ = Describe("DBUtil", func() {
 				query := &model.EventStoreQuery{
 					AggregateID:      aggID,
 					AggregateVersion: 43,
-					YearBucket:       2019,
 				}
-				ver, err := dbUtil.GetAggMetaVersion(query)
+				ver, err := dbUtil.GetAggMetaVersion(0, query)
 				Expect(err).ToNot(HaveOccurred())
 				Expect(ver).To(Equal(query.AggregateVersion))
 
-				aggIDCol, err := eventMetaTable.Column("aggregateID")
+				partnKeyCol, err := eventMetaTable.Column("partitionKey")
 				Expect(err).ToNot(HaveOccurred())
-				yearBucketCol, err := eventMetaTable.Column("yearBucket")
+				aggIDCol, err := eventMetaTable.Column("aggregateID")
 				Expect(err).ToNot(HaveOccurred())
 
 				bind := []model.EventMeta{}
 				sp := csndra.SelectParams{
 					ColumnValues: []csndra.ColumnComparator{
-						csndra.Comparator(yearBucketCol, query.YearBucket).Eq(),
+						csndra.Comparator(partnKeyCol, 0).Eq(),
 						csndra.Comparator(aggIDCol, query.AggregateID).Eq(),
 					},
 					ResultsBind:   &bind,
@@ -191,12 +178,11 @@ var _ = Describe("DBUtil", func() {
 				}
 
 				_, err = eventMetaTable.Select(sp)
+				Expect(err).ToNot(HaveOccurred())
 				Expect(bind).To(HaveLen(1))
 				meta := bind[0]
 
-				Expect(err).ToNot(HaveOccurred())
 				Expect(meta.AggregateID).To(Equal(query.AggregateID))
-				Expect(meta.YearBucket).To(Equal(query.YearBucket))
 				Expect(meta.AggregateVersion).To(Equal(query.AggregateVersion + 1))
 			},
 		)
@@ -209,15 +195,15 @@ var _ = Describe("DBUtil", func() {
 		BeforeEach(func() {
 			// This resets the event-meta row to initial value
 			aggID = 12
-			uuid, err := cql.RandomUUID()
+			uuid, err := uuuid.NewV4()
 			Expect(err).ToNot(HaveOccurred())
 
 			mockEvent = model.Event{
 				AggregateID: aggID,
 				Version:     10,
-				YearBucket:  2019,
-				Data:        "test",
-				UserID:      3,
+				YearBucket:  2018,
+				Data:        []byte("test"),
+				UserUUID:    uuid,
 				Timestamp:   time.Now(),
 				UUID:        uuid,
 				Action:      "insert",
@@ -242,7 +228,7 @@ var _ = Describe("DBUtil", func() {
 			query := &model.EventStoreQuery{
 				AggregateID:      aggID,
 				AggregateVersion: 10,
-				YearBucket:       2019,
+				YearBucket:       2018,
 			}
 			events, err := dbUtil.GetAggEvents(query, 40)
 			Expect(err).ToNot(HaveOccurred())
@@ -265,7 +251,6 @@ var _ = Describe("DBUtil", func() {
 		It("should throw error if AggregateID is not specified", func() {
 			query := &model.EventStoreQuery{
 				AggregateVersion: 10,
-				YearBucket:       2019,
 			}
 			_, err := dbUtil.GetAggEvents(query, 40)
 			Expect(err).To(HaveOccurred())
@@ -274,16 +259,6 @@ var _ = Describe("DBUtil", func() {
 		It("should throw error if AggregateVersion is not specified", func() {
 			query := &model.EventStoreQuery{
 				AggregateID: aggID,
-				YearBucket:  2019,
-			}
-			_, err := dbUtil.GetAggEvents(query, 40)
-			Expect(err).To(HaveOccurred())
-		})
-
-		It("should throw error if YearBucket is not specified", func() {
-			query := &model.EventStoreQuery{
-				AggregateID:      aggID,
-				AggregateVersion: 10,
 			}
 			_, err := dbUtil.GetAggEvents(query, 40)
 			Expect(err).To(HaveOccurred())
