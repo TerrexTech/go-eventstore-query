@@ -1,9 +1,11 @@
 package main
 
 import (
+	"github.com/TerrexTech/uuuid"
 	"encoding/json"
 	"log"
 	"os"
+	"strconv"
 
 	"github.com/Shopify/sarama"
 	"github.com/TerrexTech/go-commonutils/commonutil"
@@ -17,8 +19,8 @@ import (
 // kafkaIO is a convenient function to initialize KafkaIO.
 func kafkaIO() (*KafkaIO, error) {
 	brokers := os.Getenv("KAFKA_BROKERS")
-	consumerGroupName := os.Getenv("KAFKA_REQUEST_SINK_CONSUMER_GROUP_NAME")
-	consumerTopics := os.Getenv("KAFKA_REQUEST_SINK_TOPIC")
+	consumerGroupName := os.Getenv("KAFKA_REQUEST_CONSUMER_GROUP_NAME")
+	consumerTopics := os.Getenv("KAFKA_REQUEST_TOPIC")
 	responseTopic := os.Getenv("KAFKA_EVENT_RESPONSE_TOPIC")
 
 	config := KafkaConfig{
@@ -42,19 +44,21 @@ func main() {
 		log.Println(err)
 	}
 
+	// Check for missing environment variables
 	missingVar, err := commonutil.ValidateEnv(
 		"CASSANDRA_HOSTS",
 		"CASSANDRA_DATA_CENTERS",
 		"CASSANDRA_KEYSPACE",
 		"CASSANDRA_EVENT_TABLE",
 		"CASSANDRA_EVENT_META_TABLE",
+		"CASSANDRA_EVENT_META_PARTITION_KEY",
+
 		"KAFKA_BROKERS",
-		"KAFKA_REQUEST_SINK_CONSUMER_GROUP_NAME",
-		"KAFKA_REQUEST_SINK_TOPIC",
+		"KAFKA_REQUEST_CONSUMER_GROUP_NAME",
+		"KAFKA_REQUEST_TOPIC",
 		"KAFKA_EVENT_BATCH_SIZE",
 		"KAFKA_EVENT_RESPONSE_TOPIC",
 	)
-	// Some env-var is missing. Error-msg will be printed by util-lib itself.
 	if err != nil {
 		log.Fatalf(
 			"Error: Environment variable %s is required but was not found", missingVar,
@@ -90,6 +94,7 @@ func main() {
 		}
 	}()
 
+	log.Println("Bootstrapping Event-Table")
 	eventTable, err := bootstrap.Event()
 	if err != nil {
 		err = errors.Wrap(err, "Error Bootstrapping Event-Table")
@@ -104,8 +109,6 @@ func main() {
 	}
 	log.Println("Bootstrapped EventMeta-Table")
 
-	log.Println("Bootstrapping Event-Table")
-
 	dbUtil := &ioutil.DBUtil{
 		EventMetaTable: eventMetaTable,
 		EventTable:     eventTable,
@@ -114,14 +117,25 @@ func main() {
 		DBUtil:       dbUtil,
 		ResponseChan: kio.ProducerInput(),
 	}
+
+	eventMetaPartnKeyStr := os.Getenv("CASSANDRA_EVENT_META_PARTITION_KEY")
+	eventMetaPartnKey, err := strconv.Atoi(eventMetaPartnKeyStr)
+
+	if err != nil {
+		err = errors.Wrap(err, "CASSANDRA_EVENT_META_PARTITION_KEY must be a valid integer")
+		log.Fatalln(err)
+	}
+
+	log.Println("EventStore-Query service ready")
 	for queryMsg := range kio.consumerMsgChan {
-		go processQuery(queryUtil, queryMsg, kio.MarkOffset())
+		go processQuery(int8(eventMetaPartnKey), queryUtil, queryMsg, kio.MarkOffset())
 	}
 }
 
 // processQuery handles the request-query from Kafka consumer.
 // "Query" here refers to the request by an Aggregate to get new events.
 func processQuery(
+	eventMetaPartnKey int8,
 	queryUtil *ioutil.QueryUtil,
 	queryMsg *sarama.ConsumerMessage,
 	markOffset chan<- *sarama.ConsumerMessage,
@@ -141,15 +155,16 @@ func processQuery(
 		return
 	}
 
-	events, err := queryUtil.QueryHandler(query)
+	events, err := queryUtil.QueryHandler(eventMetaPartnKey, query)
 	if err != nil {
 		err = errors.Wrap(err, "Error Processing Query")
 		queryUtil.ResponseChan <- &model.KafkaResponse{
-			AggregateID: query.AggregateID,
-			Error:       err.Error(),
+			AggregateID:   query.AggregateID,
+			CorrelationID: query.CorrelationID,
+			Error:         err.Error(),
 		}
 		log.Println(err)
 		return
 	}
-	queryUtil.BatchProduce(query.AggregateID, events)
+	queryUtil.BatchProduce(query.CorrelationID uuuid.UUID, query.AggregateID, events)
 }

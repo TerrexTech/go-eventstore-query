@@ -6,6 +6,8 @@ import (
 	"os"
 	"strconv"
 
+	"github.com/TerrexTech/uuuid"
+
 	"github.com/TerrexTech/go-eventstore-models/model"
 	"github.com/pkg/errors"
 )
@@ -24,9 +26,12 @@ type QueryUtil struct {
 }
 
 // QueryHandler gets the Aggregate-Events.
-func (qu *QueryUtil) QueryHandler(query *model.EventStoreQuery) (*[]model.Event, error) {
+func (qu *QueryUtil) QueryHandler(
+	eventMetaPartnKey int8,
+	query *model.EventStoreQuery,
+) (*[]model.Event, error) {
 	// Get Aggregate Meta-Version
-	aggMetaVersion, err := qu.DBUtil.GetAggMetaVersion(query)
+	aggMetaVersion, err := qu.DBUtil.GetAggMetaVersion(eventMetaPartnKey, query)
 	if err != nil {
 		err = errors.Wrap(err, "Error Getting Aggregate Meta-Version")
 		return nil, err
@@ -42,7 +47,11 @@ func (qu *QueryUtil) QueryHandler(query *model.EventStoreQuery) (*[]model.Event,
 
 // BatchProduce produces the provided events in chunks of sizes set as per the env-var
 // "KAFKA_EVENT_BATCH_SIZE". If this value is missing, the default batch value if 6.
-func (qu *QueryUtil) BatchProduce(aggID int8, events *[]model.Event) {
+func (qu *QueryUtil) BatchProduce(
+	CorrelationID uuuid.UUID,
+	aggID int8,
+	events *[]model.Event,
+) {
 	defaultSize := 6
 	batchSize, err := strconv.Atoi(os.Getenv("KAFKA_EVENT_BATCH_SIZE"))
 	if err != nil {
@@ -68,9 +77,10 @@ func (qu *QueryUtil) BatchProduce(aggID int8, events *[]model.Event) {
 		}
 
 		kr := &model.KafkaResponse{
-			AggregateID: aggID,
-			Error:       errStr,
-			Result:      string(batchJSON),
+			AggregateID:   aggID,
+			CorrelationID: CorrelationID,
+			Error:         errStr,
+			Result:        batchJSON,
 		}
 		qu.ResponseChan <- kr
 	}

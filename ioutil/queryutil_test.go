@@ -8,9 +8,10 @@ import (
 	"sync"
 	"time"
 
+	"github.com/TerrexTech/uuuid"
+
 	"github.com/TerrexTech/go-eventstore-models/model"
 	"github.com/TerrexTech/go-eventstore-query/mock"
-	cql "github.com/gocql/gocql"
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
 	"github.com/pkg/errors"
@@ -24,15 +25,15 @@ var _ = Describe("QueryUtil", func() {
 		mockEventStoreQuery *model.EventStoreQuery
 	)
 	var genEvent = func(version int64) *model.Event {
-		uuid, err := cql.RandomUUID()
+		uuid, err := uuuid.NewV4()
 		Expect(err).ToNot(HaveOccurred())
 
 		return &model.Event{
 			AggregateID: mockEventStoreQuery.AggregateID,
 			Version:     version,
-			YearBucket:  mockEventStoreQuery.YearBucket,
-			Data:        "test",
-			UserID:      3,
+			YearBucket:  2018,
+			Data:        []byte("test"),
+			UserUUID:    uuid,
 			Timestamp:   time.Now(),
 			UUID:        uuid,
 			Action:      "insert",
@@ -43,7 +44,6 @@ var _ = Describe("QueryUtil", func() {
 		mockEventStoreQuery = &model.EventStoreQuery{
 			AggregateID:      12,
 			AggregateVersion: 3,
-			YearBucket:       2019,
 		}
 
 		mockEvents = []model.Event{
@@ -69,14 +69,13 @@ var _ = Describe("QueryUtil", func() {
 	Describe("QueryHandler", func() {
 		It("should return events", func() {
 			dbUtil = &mock.DBUtil{
-				MockMetaVersion: func(q *model.EventStoreQuery) (int64, error) {
+				MockMetaVersion: func(partnKey int8, q *model.EventStoreQuery) (int64, error) {
 					Expect(reflect.DeepEqual(q, mockEventStoreQuery)).To(BeTrue())
 					return mockMetaVer, nil
 				},
 				MockEvents: func(q *model.EventStoreQuery, mv int64) (*[]model.Event, error) {
 					Expect(q.AggregateID).To(Equal(mockEventStoreQuery.AggregateID))
 					Expect(q.AggregateVersion).To(Equal(mockEventStoreQuery.AggregateVersion))
-					Expect(q.YearBucket).To(Equal(mockEventStoreQuery.YearBucket))
 
 					Expect(mv).To(Equal(mockMetaVer))
 					return &mockEvents, nil
@@ -86,12 +85,14 @@ var _ = Describe("QueryUtil", func() {
 			qu := &QueryUtil{
 				DBUtil: dbUtil,
 			}
-			qu.QueryHandler(mockEventStoreQuery)
+			// 0 is the partition-key. It is usually set from env var,
+			// but here we just hard-code for convenience.
+			qu.QueryHandler(0, mockEventStoreQuery)
 		})
 
 		It("should return any errors that occur while getting AggregateMetaVersion", func() {
 			dbUtil = &mock.DBUtil{
-				MockMetaVersion: func(q *model.EventStoreQuery) (int64, error) {
+				MockMetaVersion: func(_ int8, _ *model.EventStoreQuery) (int64, error) {
 					return 0, errors.New("some-error")
 				},
 			}
@@ -99,13 +100,13 @@ var _ = Describe("QueryUtil", func() {
 			qu := &QueryUtil{
 				DBUtil: dbUtil,
 			}
-			_, err := qu.QueryHandler(mockEventStoreQuery)
+			_, err := qu.QueryHandler(0, mockEventStoreQuery)
 			Expect(err).To(HaveOccurred())
 		})
 
 		It("should return any errors that occur while getting AggregateEvents", func() {
 			dbUtil = &mock.DBUtil{
-				MockMetaVersion: func(q *model.EventStoreQuery) (int64, error) {
+				MockMetaVersion: func(_ int8, q *model.EventStoreQuery) (int64, error) {
 					Expect(reflect.DeepEqual(q, mockEventStoreQuery)).To(BeTrue())
 					return mockMetaVer, nil
 				},
@@ -117,7 +118,7 @@ var _ = Describe("QueryUtil", func() {
 			qu := &QueryUtil{
 				DBUtil: dbUtil,
 			}
-			_, err := qu.QueryHandler(mockEventStoreQuery)
+			_, err := qu.QueryHandler(0, mockEventStoreQuery)
 			Expect(err).To(HaveOccurred())
 		})
 	})
@@ -137,6 +138,7 @@ var _ = Describe("QueryUtil", func() {
 						ResponseChan: (chan<- *model.KafkaResponse)(responseChan),
 					}
 
+					// Listener for batch events (batch events generated below)
 					var wg sync.WaitGroup
 					wg.Add(1)
 					// Here we get the KafkaResponse from the response channel, unmarshal events array
@@ -179,7 +181,8 @@ var _ = Describe("QueryUtil", func() {
 						wg.Done()
 					}()
 
-					qu.BatchProduce(37, &mockEvents)
+					// BatchEvents produced here
+					qu.BatchProduce(uuuid.UUID{}, 37, &mockEvents)
 					wg.Wait()
 					close(done)
 				}, 2,
