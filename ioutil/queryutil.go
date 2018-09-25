@@ -30,7 +30,6 @@ func (qu *QueryUtil) QueryHandler(
 	eventMetaPartnKey int8,
 	query *model.EventStoreQuery,
 ) (*[]model.Event, error) {
-	log.Println(query)
 	// Get Aggregate Meta-Version
 	aggMetaVersion, err := qu.DBUtil.GetAggMetaVersion(eventMetaPartnKey, query)
 	if err != nil {
