@@ -52,12 +52,12 @@
   version = "v2.1.1"
 
 [[projects]]
-  digest = "1:ce36c38655294f7a1c19b96c01ef0e94a843773e289de557c754dc3756c514a4"
+  digest = "1:cb1eb706e2ebae50593fb3614afbdd03c9465ee7653f67c0cbc4dd050889d0cb"
   name = "github.com/TerrexTech/uuuid"
   packages = ["."]
   pruneopts = "UT"
-  revision = "a29ab526ee6513a1fd0195b41a921f305298b1c2"
-  version = "v1.0.0"
+  revision = "f8dab568898928167bc274d98c3e6cb6370e6458"
+  version = "v1.0.1"
 
 [[projects]]
   digest = "1:526d64d0a3ac6c24875724a9355895be56a21f89a5d3ab5ba88d91244269a7d8"
@@ -259,11 +259,11 @@
 
 [[projects]]
   branch = "master"
-  digest = "1:01a910c4664c362dbf8e9eb3a64944996ed36874d07c5a95c08175dd5ff7a648"
+  digest = "1:4c18b929ff2f30ebf16c43fd9e0755fad03b290af199c5bcd82dde4c80cf8781"
   name = "golang.org/x/sys"
   packages = ["unix"]
   pruneopts = "UT"
-  revision = "c01370cb5c9b7812800ec97eb5692a14fb8d577c"
+  revision = "90868a75fefd03942536221d7c0e2f84ec62a668"
 
 [[projects]]
   digest = "1:aa4d6967a3237f8367b6bf91503964a77183ecf696f1273e8ad3551bb4412b5f"

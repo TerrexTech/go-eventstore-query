@@ -24,11 +24,11 @@ end
 
 Vagrant.configure(2) do |config|
   config.vm.define :queryvm do |queryvm|
-    queryvm.vm.hostname = "persistence"
+    queryvm.vm.hostname = "query"
     queryvm.vm.box = "bento/ubuntu-16.04"
 
     queryvm.vm.provider :virtualbox do |vb|
-      vb.name = "persistence-vm"
+      vb.name = "query-vm"
       vb.gui = false
       vb.memory = "2024"
       vb.cpus = 2

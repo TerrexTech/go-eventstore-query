@@ -1,7 +1,6 @@
 package main
 
 import (
-	"github.com/TerrexTech/uuuid"
 	"encoding/json"
 	"log"
 	"os"
@@ -166,5 +165,5 @@ func processQuery(
 		log.Println(err)
 		return
 	}
-	queryUtil.BatchProduce(query.CorrelationID uuuid.UUID, query.AggregateID, events)
+	queryUtil.BatchProduce(query.CorrelationID, query.AggregateID, events)
 }

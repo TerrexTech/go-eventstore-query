@@ -33,7 +33,7 @@ func (dbu *DBUtil) GetAggMetaVersion(
 	eventStoreQuery *model.EventStoreQuery,
 ) (int64, error) {
 	aggID := eventStoreQuery.AggregateID
-	if aggID == 1 {
+	if aggID == 0 {
 		return -1, errors.New("AggregateID not specified")
 	}
 
