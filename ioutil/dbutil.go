@@ -111,7 +111,7 @@ func (dbu *DBUtil) GetAggEvents(
 			csndra.Comparator(yearBucketCol, eventStoreQuery.YearBucket).Eq(),
 			csndra.Comparator(aggIDCol, aggID).Eq(),
 			csndra.Comparator(versionCol, aggVersion).Gt(),
-			csndra.Comparator(versionCol, eventMetaVersion).Lt(),
+			csndra.Comparator(versionCol, eventMetaVersion).LtOrEq(),
 		},
 		SelectColumns: dbu.EventTable.Columns(),
 	}
