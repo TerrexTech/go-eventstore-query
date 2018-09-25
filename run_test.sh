@@ -47,9 +47,14 @@ done
 go test -v ./...
 
 docker-compose up -d --build go-eventstore-query
+rc=$?
+if [[ $rc != 0 ]]
+  then exit $rc
+fi
 
 echo "Waiting for Go-API Sessions to initialize"
 sleep 5
 
 # Run Kafka tests
 docker-compose up --build go-eventstore-query-test
+exit $?
