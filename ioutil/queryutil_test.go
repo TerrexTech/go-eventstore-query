@@ -73,12 +73,12 @@ var _ = Describe("QueryUtil", func() {
 					Expect(reflect.DeepEqual(q, mockEventStoreQuery)).To(BeTrue())
 					return mockMetaVer, nil
 				},
-				MockEvents: func(q *model.EventStoreQuery, mv int64) (*[]model.Event, error) {
+				MockEvents: func(q *model.EventStoreQuery, mv int64) ([]model.Event, error) {
 					Expect(q.AggregateID).To(Equal(mockEventStoreQuery.AggregateID))
 					Expect(q.AggregateVersion).To(Equal(mockEventStoreQuery.AggregateVersion))
 
 					Expect(mv).To(Equal(mockMetaVer))
-					return &mockEvents, nil
+					return mockEvents, nil
 				},
 			}
 
@@ -110,7 +110,7 @@ var _ = Describe("QueryUtil", func() {
 					Expect(reflect.DeepEqual(q, mockEventStoreQuery)).To(BeTrue())
 					return mockMetaVer, nil
 				},
-				MockEvents: func(q *model.EventStoreQuery, mv int64) (*[]model.Event, error) {
+				MockEvents: func(q *model.EventStoreQuery, mv int64) ([]model.Event, error) {
 					return nil, errors.New("some-error")
 				},
 			}

@@ -6,7 +6,7 @@ import (
 
 // MEventStore is a mock for ioutil.EventStore.
 type MEventStore struct {
-	MockEvents      func(*model.EventStoreQuery, int64) (*[]model.Event, error)
+	MockEvents      func(*model.EventStoreQuery, int64) ([]model.Event, error)
 	MockMetaVersion func(*model.EventStoreQuery) (int64, error)
 }
 
@@ -25,10 +25,10 @@ func (dbu *MEventStore) GetAggMetaVersion(
 func (dbu *MEventStore) GetAggEvents(
 	eventStoreQuery *model.EventStoreQuery,
 	eventMetaVersion int64,
-) (*[]model.Event, error) {
+) ([]model.Event, error) {
 	if dbu.MockMetaVersion != nil {
 		return dbu.MockEvents(eventStoreQuery, eventMetaVersion)
 	}
 
-	return &[]model.Event{}, nil
+	return []model.Event{}, nil
 }
