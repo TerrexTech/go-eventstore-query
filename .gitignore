@@ -4,3 +4,6 @@
 vendor*
 .vendor*
 debug*
+main/.env
+ioutil/.env
+test/.env

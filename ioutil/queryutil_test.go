@@ -2,30 +2,30 @@ package ioutil
 
 import (
 	"encoding/json"
-	"fmt"
 	"os"
 	"reflect"
+	"strconv"
 	"sync"
 	"time"
 
 	"github.com/TerrexTech/uuuid"
+	"github.com/pkg/errors"
 
 	"github.com/TerrexTech/go-eventstore-models/model"
 	"github.com/TerrexTech/go-eventstore-query/mock"
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
-	"github.com/pkg/errors"
 )
 
 var _ = Describe("QueryUtil", func() {
 	var (
-		dbUtil              *mock.DBUtil
+		eventStore          *mock.MEventStore
 		mockEvents          []model.Event
 		mockMetaVer         int64
 		mockEventStoreQuery *model.EventStoreQuery
 	)
 	var genEvent = func(version int64) *model.Event {
-		uuid, err := uuuid.NewV4()
+		uuid, err := uuuid.NewV1()
 		Expect(err).ToNot(HaveOccurred())
 
 		return &model.Event{
@@ -35,7 +35,7 @@ var _ = Describe("QueryUtil", func() {
 			Data:        []byte("test"),
 			UserUUID:    uuid,
 			Timestamp:   time.Now(),
-			UUID:        uuid,
+			TimeUUID:    uuid,
 			Action:      "insert",
 		}
 	}
@@ -68,8 +68,8 @@ var _ = Describe("QueryUtil", func() {
 
 	Describe("QueryHandler", func() {
 		It("should return events", func() {
-			dbUtil = &mock.DBUtil{
-				MockMetaVersion: func(partnKey int8, q *model.EventStoreQuery) (int64, error) {
+			eventStore = &mock.MEventStore{
+				MockMetaVersion: func(q *model.EventStoreQuery) (int64, error) {
 					Expect(reflect.DeepEqual(q, mockEventStoreQuery)).To(BeTrue())
 					return mockMetaVer, nil
 				},
@@ -83,30 +83,30 @@ var _ = Describe("QueryUtil", func() {
 			}
 
 			qu := &QueryUtil{
-				DBUtil: dbUtil,
+				EventStore: eventStore,
 			}
 			// 0 is the partition-key. It is usually set from env var,
 			// but here we just hard-code for convenience.
-			qu.QueryHandler(0, mockEventStoreQuery)
+			qu.QueryHandler(mockEventStoreQuery)
 		})
 
 		It("should return any errors that occur while getting AggregateMetaVersion", func() {
-			dbUtil = &mock.DBUtil{
-				MockMetaVersion: func(_ int8, _ *model.EventStoreQuery) (int64, error) {
+			eventStore = &mock.MEventStore{
+				MockMetaVersion: func(_ *model.EventStoreQuery) (int64, error) {
 					return 0, errors.New("some-error")
 				},
 			}
 
 			qu := &QueryUtil{
-				DBUtil: dbUtil,
+				EventStore: eventStore,
 			}
-			_, err := qu.QueryHandler(0, mockEventStoreQuery)
+			_, err := qu.QueryHandler(mockEventStoreQuery)
 			Expect(err).To(HaveOccurred())
 		})
 
 		It("should return any errors that occur while getting AggregateEvents", func() {
-			dbUtil = &mock.DBUtil{
-				MockMetaVersion: func(_ int8, q *model.EventStoreQuery) (int64, error) {
+			eventStore = &mock.MEventStore{
+				MockMetaVersion: func(q *model.EventStoreQuery) (int64, error) {
 					Expect(reflect.DeepEqual(q, mockEventStoreQuery)).To(BeTrue())
 					return mockMetaVer, nil
 				},
@@ -116,9 +116,9 @@ var _ = Describe("QueryUtil", func() {
 			}
 
 			qu := &QueryUtil{
-				DBUtil: dbUtil,
+				EventStore: eventStore,
 			}
-			_, err := qu.QueryHandler(0, mockEventStoreQuery)
+			_, err := qu.QueryHandler(mockEventStoreQuery)
 			Expect(err).To(HaveOccurred())
 		})
 	})
@@ -134,10 +134,12 @@ var _ = Describe("QueryUtil", func() {
 					err := os.Setenv("KAFKA_EVENT_BATCH_SIZE", "4")
 					Expect(err).ToNot(HaveOccurred())
 
+					batchSizeStr := os.Getenv("KAFKA_EVENT_BATCH_SIZE")
+					batchSize, err := strconv.Atoi(batchSizeStr)
+					Expect(err).ToNot(HaveOccurred())
 					qu := &QueryUtil{
-						ResponseChan: (chan<- *model.KafkaResponse)(responseChan),
+						BatchSize: batchSize,
 					}
-
 					// Listener for batch events (batch events generated below)
 					var wg sync.WaitGroup
 					wg.Add(1)
@@ -147,22 +149,20 @@ var _ = Describe("QueryUtil", func() {
 						defer GinkgoRecover()
 						matchCount := 0
 						batchSizeMaintained := true
-						batchSizeEnv := os.Getenv("KAFKA_EVENT_BATCH_SIZE")
 						for res := range responseChan {
 							resEvents := []model.Event{}
-							err := json.Unmarshal([]byte(res.Result), &resEvents)
+							err := json.Unmarshal(res.Result, &resEvents)
 							Expect(err).ToNot(HaveOccurred())
 
 							// Check that events are received in correct batch-size
 							// Only last events-batch can have incorrect batch-size,
 							// so we check before the last value is assigned
 							Expect(batchSizeMaintained).To(BeTrue())
-							eventsSize := fmt.Sprintf("%d", len(resEvents))
-							batchSizeMaintained = eventsSize == batchSizeEnv
+							batchSizeMaintained = len(resEvents) == batchSize
 
-							matches := false
 							// Ensure every events from mock-events is matched
 							for _, re := range resEvents {
+								matches := false
 								for _, e := range mockEvents {
 									// Convert timestamps to consistent formats
 									re.Timestamp = time.Unix(re.Timestamp.Unix(), 0)
@@ -170,6 +170,7 @@ var _ = Describe("QueryUtil", func() {
 									matches = reflect.DeepEqual(re, e)
 									if matches {
 										matchCount++
+										break
 									}
 								}
 							}
@@ -182,10 +183,14 @@ var _ = Describe("QueryUtil", func() {
 					}()
 
 					// BatchEvents produced here
-					qu.BatchProduce(uuuid.UUID{}, 37, &mockEvents)
+					krs := qu.BatchProduce(uuuid.UUID{}, 37, mockEvents)
+					// Pass KafkaResponse
+					for _, kr := range krs {
+						responseChan <- &kr
+					}
 					wg.Wait()
 					close(done)
-				}, 2,
+				}, 2000,
 			)
 		})
 	})

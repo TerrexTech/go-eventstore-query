@@ -1,4 +1,4 @@
-# Gopkg.toml example
+  # Gopkg.toml example
 #
 # Refer to https://golang.github.io/dep/docs/Gopkg.toml.html
 # for detailed Gopkg.toml documentation.
@@ -30,7 +30,7 @@
 
 [[constraint]]
   name = "github.com/Shopify/sarama"
-  version = "1.18.0"
+  version = "1.19.0"
 
 [[constraint]]
   name = "github.com/TerrexTech/go-cassandrautils"
@@ -38,19 +38,19 @@
 
 [[constraint]]
   name = "github.com/TerrexTech/go-commonutils"
-  version = "3.0.0"
+  version = "3.1.0"
 
 [[constraint]]
   name = "github.com/TerrexTech/go-eventstore-models"
-  version = "2.1.1"
+  version = "3.0.0"
 
 [[constraint]]
   name = "github.com/TerrexTech/go-kafkautils"
-  version = "2.1.1"
+  version = "3.0.0"
 
 [[constraint]]
   name = "github.com/TerrexTech/uuuid"
-  version = "1.0.1"
+  version = "1.2.0"
 
 [[constraint]]
   branch = "master"
