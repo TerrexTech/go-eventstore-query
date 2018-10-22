@@ -228,16 +228,16 @@ var _ = Describe("EventStore", func() {
 			events, err := eventtore.GetAggEvents(query, 40)
 			Expect(err).ToNot(HaveOccurred())
 
-			Expect(*events).To(HaveLen(2))
+			Expect(events).To(HaveLen(2))
 
-			e0 := (*events)[0]
+			e0 := events[0]
 			mockEvent.Version = 13
 			// Convert timestamps to consistent formats
 			mockEvent.Timestamp = time.Unix(mockEvent.Timestamp.Unix(), 0)
 			e0.Timestamp = time.Unix(e0.Timestamp.Unix(), 0)
 			Expect(reflect.DeepEqual(e0, mockEvent)).To(BeTrue())
 
-			e1 := (*events)[1]
+			e1 := events[1]
 			mockEvent.Version = 11
 			e1.Timestamp = time.Unix(e1.Timestamp.Unix(), 0)
 			Expect(reflect.DeepEqual(e1, mockEvent)).To(BeTrue())
