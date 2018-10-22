@@ -18,7 +18,7 @@ import (
 	. "github.com/onsi/gomega"
 )
 
-var _ = Describe("DBUtil", func() {
+var _ = Describe("EventStore", func() {
 	var (
 		aggID          int8
 		eventMetaTable *csndra.Table
@@ -26,6 +26,15 @@ var _ = Describe("DBUtil", func() {
 	)
 
 	BeforeSuite(func() {
+		_, err := commonutil.ValidateEnv(
+			"CASSANDRA_HOSTS",
+			"CASSANDRA_USERNAME",
+			"CASSANDRA_PASSWORD",
+			"CASSANDRA_KEYSPACE",
+			"CASSANDRA_KEYSPACE_TEST",
+		)
+		Expect(err).ToNot(HaveOccurred())
+
 		hosts := os.Getenv("CASSANDRA_HOSTS")
 		username := os.Getenv("CASSANDRA_USERNAME")
 		password := os.Getenv("CASSANDRA_PASSWORD")
@@ -33,21 +42,11 @@ var _ = Describe("DBUtil", func() {
 		testKeyspace := os.Getenv("CASSANDRA_KEYSPACE_TEST")
 
 		// Backup current keyspace-name to another env var and switch current keyspace with test
-		err := os.Setenv("CASSANDRA_KEYSPACE_PRETEST", keyspace)
+		err = os.Setenv("CASSANDRA_KEYSPACE_PRETEST", keyspace)
 		Expect(err).ToNot(HaveOccurred())
 		err = os.Setenv("CASSANDRA_KEYSPACE", testKeyspace)
 		Expect(err).ToNot(HaveOccurred())
 		keyspace = os.Getenv("CASSANDRA_KEYSPACE")
-
-		_, err = commonutil.ValidateEnv(
-			"CASSANDRA_HOSTS",
-			"CASSANDRA_USERNAME",
-			"CASSANDRA_PASSWORD",
-			"CASSANDRA_KEYSPACE",
-			"CASSANDRA_KEYSPACE_TEST",
-			"CASSANDRA_KEYSPACE_PRETEST",
-		)
-		Expect(err).ToNot(HaveOccurred())
 
 		cluster := cql.NewCluster(*commonutil.ParseHosts(hosts)...)
 		cluster.ConnectTimeout = time.Millisecond * 10000
@@ -100,7 +99,7 @@ var _ = Describe("DBUtil", func() {
 	})
 
 	Describe("GetAggMetaVersion", func() {
-		var dbUtil *DBUtil
+		var eventStore EventStore
 
 		BeforeEach(func() {
 			// This resets the event-meta row to initial value
@@ -112,10 +111,8 @@ var _ = Describe("DBUtil", func() {
 			err := <-eventMetaTable.AsyncInsert(eventMeta)
 			Expect(err).ToNot(HaveOccurred())
 
-			dbUtil = &DBUtil{
-				EventMetaTable: eventMetaTable,
-				EventTable:     eventTable,
-			}
+			eventStore, err = NewEventStore(eventTable, eventMetaTable, 0)
+			Expect(err).ToNot(HaveOccurred())
 		})
 
 		It("should return aggregate meta-version", func() {
@@ -123,7 +120,7 @@ var _ = Describe("DBUtil", func() {
 				AggregateID:      aggID,
 				AggregateVersion: 43,
 			}
-			ver, err := dbUtil.GetAggMetaVersion(0, query)
+			ver, err := eventStore.GetAggMetaVersion(query)
 			Expect(err).ToNot(HaveOccurred())
 
 			Expect(ver).To(Equal(query.AggregateVersion))
@@ -133,7 +130,7 @@ var _ = Describe("DBUtil", func() {
 			query := &model.EventStoreQuery{
 				AggregateVersion: 43,
 			}
-			ver, err := dbUtil.GetAggMetaVersion(0, query)
+			ver, err := eventStore.GetAggMetaVersion(query)
 			Expect(err).To(HaveOccurred())
 			Expect(ver).To(Equal(int64(-1)))
 		})
@@ -145,7 +142,7 @@ var _ = Describe("DBUtil", func() {
 					AggregateID:      43,
 					AggregateVersion: 98,
 				}
-				ver, err := dbUtil.GetAggMetaVersion(0, query)
+				ver, err := eventStore.GetAggMetaVersion(query)
 				Expect(err).To(HaveOccurred())
 				Expect(ver).To(Equal(int64(-1)))
 			},
@@ -158,7 +155,7 @@ var _ = Describe("DBUtil", func() {
 					AggregateID:      aggID,
 					AggregateVersion: 43,
 				}
-				ver, err := dbUtil.GetAggMetaVersion(0, query)
+				ver, err := eventStore.GetAggMetaVersion(query)
 				Expect(err).ToNot(HaveOccurred())
 				Expect(ver).To(Equal(query.AggregateVersion))
 
@@ -189,13 +186,13 @@ var _ = Describe("DBUtil", func() {
 	})
 
 	Describe("GetAggEvents", func() {
-		var dbUtil *DBUtil
+		var eventtore EventStore
 		var mockEvent model.Event
 
 		BeforeEach(func() {
 			// This resets the event-meta row to initial value
 			aggID = 12
-			uuid, err := uuuid.NewV4()
+			uuid, err := uuuid.NewV1()
 			Expect(err).ToNot(HaveOccurred())
 
 			mockEvent = model.Event{
@@ -205,7 +202,7 @@ var _ = Describe("DBUtil", func() {
 				Data:        []byte("test"),
 				UserUUID:    uuid,
 				Timestamp:   time.Now(),
-				UUID:        uuid,
+				TimeUUID:    uuid,
 				Action:      "insert",
 			}
 			err = <-eventTable.AsyncInsert(&mockEvent)
@@ -218,10 +215,8 @@ var _ = Describe("DBUtil", func() {
 			err = <-eventTable.AsyncInsert(&mockEvent)
 			Expect(err).ToNot(HaveOccurred())
 
-			dbUtil = &DBUtil{
-				EventMetaTable: eventMetaTable,
-				EventTable:     eventTable,
-			}
+			eventtore, err = NewEventStore(eventTable, eventMetaTable, 0)
+			Expect(err).ToNot(HaveOccurred())
 		})
 
 		It("should return new events for Aggregate", func() {
@@ -230,7 +225,7 @@ var _ = Describe("DBUtil", func() {
 				AggregateVersion: 10,
 				YearBucket:       2018,
 			}
-			events, err := dbUtil.GetAggEvents(query, 40)
+			events, err := eventtore.GetAggEvents(query, 40)
 			Expect(err).ToNot(HaveOccurred())
 
 			Expect(*events).To(HaveLen(2))
@@ -252,7 +247,7 @@ var _ = Describe("DBUtil", func() {
 			query := &model.EventStoreQuery{
 				AggregateVersion: 10,
 			}
-			_, err := dbUtil.GetAggEvents(query, 40)
+			_, err := eventtore.GetAggEvents(query, 40)
 			Expect(err).To(HaveOccurred())
 		})
 
@@ -260,7 +255,7 @@ var _ = Describe("DBUtil", func() {
 			query := &model.EventStoreQuery{
 				AggregateID: aggID,
 			}
-			_, err := dbUtil.GetAggEvents(query, 40)
+			_, err := eventtore.GetAggEvents(query, 40)
 			Expect(err).To(HaveOccurred())
 		})
 	})

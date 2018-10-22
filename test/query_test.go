@@ -1,6 +1,7 @@
 package test
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -8,13 +9,15 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pkg/errors"
+
+	"github.com/Shopify/sarama"
 	"github.com/TerrexTech/uuuid"
 
 	"github.com/TerrexTech/go-commonutils/commonutil"
 	"github.com/TerrexTech/go-eventstore-models/bootstrap"
 	"github.com/TerrexTech/go-eventstore-models/model"
-	"github.com/TerrexTech/go-kafkautils/consumer"
-	"github.com/TerrexTech/go-kafkautils/producer"
+	"github.com/TerrexTech/go-kafkautils/kafka"
 	"github.com/joho/godotenv"
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
@@ -24,6 +27,35 @@ import (
 // after the request is processed by the service from request-topic.
 // The actual validation of data is done by the included unit tests themselves.
 func TestEventQuery(t *testing.T) {
+	// Load environment-file.
+	// Env vars will be read directly from environment if this file fails loading
+	err := godotenv.Load()
+	if err != nil {
+		err = errors.Wrap(err,
+			".env file not found, env-vars will be read as set in environment",
+		)
+		log.Println(err)
+	}
+
+	missingVar, err := commonutil.ValidateEnv(
+		"CASSANDRA_HOSTS",
+		"CASSANDRA_DATA_CENTERS",
+		"CASSANDRA_KEYSPACE",
+		"CASSANDRA_EVENT_TABLE",
+		"CASSANDRA_EVENT_META_TABLE",
+		"CASSANDRA_EVENT_META_PARTITION_KEY",
+
+		"KAFKA_BROKERS",
+		"KAFKA_CONSUMER_GROUP",
+		"KAFKA_CONSUMER_TOPICS",
+		"KAFKA_RESPONSE_TOPIC",
+	)
+
+	if err != nil {
+		err = errors.Wrapf(err, "Env-var %s is required, but is not set", missingVar)
+		log.Fatalln(err)
+	}
+
 	RegisterFailHandler(Fail)
 	RunSpecs(t, "EventQuery Suite")
 }
@@ -33,6 +65,8 @@ var _ = Describe("EventQuery", func() {
 		brokers           *[]string
 		consumerGroupName string
 		responseTopic     string
+
+		mockEventStoreQuery *model.EventStoreQuery
 	)
 
 	BeforeSuite(func() {
@@ -42,7 +76,7 @@ var _ = Describe("EventQuery", func() {
 			Expect(err).ToNot(HaveOccurred())
 
 			// Add some test-data
-			uuid, err := uuuid.NewV4()
+			uuid, err := uuuid.NewV1()
 			Expect(err).ToNot(HaveOccurred())
 
 			eventTable, err := bootstrap.Event()
@@ -54,15 +88,22 @@ var _ = Describe("EventQuery", func() {
 				Data:        []byte("test"),
 				UserUUID:    uuid,
 				Timestamp:   time.Now(),
-				UUID:        uuid,
+				TimeUUID:    uuid,
 				Action:      "insert",
 			}
 			err = <-eventTable.AsyncInsert(mockEvent)
 			Expect(err).ToNot(HaveOccurred())
 			// Insert some varied versions for testing
+			uuid, err = uuuid.NewV1()
+			Expect(err).ToNot(HaveOccurred())
+			mockEvent.TimeUUID = uuid
 			mockEvent.Version = 11
 			err = <-eventTable.AsyncInsert(&mockEvent)
 			Expect(err).ToNot(HaveOccurred())
+
+			uuid, err = uuuid.NewV1()
+			Expect(err).ToNot(HaveOccurred())
+			mockEvent.TimeUUID = uuid
 			mockEvent.Version = 13
 			err = <-eventTable.AsyncInsert(&mockEvent)
 			Expect(err).ToNot(HaveOccurred())
@@ -71,30 +112,35 @@ var _ = Describe("EventQuery", func() {
 			query := &model.EventMeta{
 				AggregateID:      1,
 				AggregateVersion: 20,
+				PartitionKey:     0,
 			}
 			err = <-eventMetaTable.AsyncInsert(query)
 			Expect(err).ToNot(HaveOccurred())
 
 			brokers = commonutil.ParseHosts(os.Getenv("KAFKA_BROKERS"))
 			consumerGroupName = "test-consumer"
-			consumerTopic := os.Getenv("KAFKA_REQUEST_TOPIC")
+			consumerTopic := os.Getenv("KAFKA_CONSUMER_TOPICS")
 
-			config := &producer.Config{
+			config := &kafka.ProducerConfig{
 				KafkaBrokers: *brokers,
 			}
 
 			log.Println("Creating Kafka mock-event Producer")
-			kafkaProducer, err := producer.New(config)
+			kafkaProducer, err := kafka.NewProducer(config)
 			Expect(err).ToNot(HaveOccurred())
 
-			mockEventStoreQuery := &model.EventStoreQuery{
+			cid, err := uuuid.NewV4()
+			Expect(err).ToNot(HaveOccurred())
+			mockEventStoreQuery = &model.EventStoreQuery{
 				AggregateID:      1,
 				AggregateVersion: 1,
+				CorrelationID:    cid,
 				YearBucket:       mockEvent.YearBucket,
+				UUID:             uuid,
 			}
 			responseTopic = fmt.Sprintf(
 				"%s.%d",
-				os.Getenv("KAFKA_EVENT_RESPONSE_TOPIC"),
+				os.Getenv("KAFKA_RESPONSE_TOPIC"),
 				mockEventStoreQuery.AggregateID,
 			)
 			metaAggVersion := int64(50)
@@ -116,38 +162,28 @@ var _ = Describe("EventQuery", func() {
 			Expect(err).ToNot(HaveOccurred())
 
 			log.Println("Fetching input-channel from mock-eventstore-query producer")
-			mockEventQueryInput, err := kafkaProducer.Input()
-			Expect(err).ToNot(HaveOccurred())
+			mockEventQueryInput := kafkaProducer.Input()
 
-			mockEventQueryInput <- producer.CreateMessage(consumerTopic, testEventQuery)
+			mockEventQueryInput <- kafka.CreateMessage(consumerTopic, testEventQuery)
 			log.Println("Produced mock-eventstore-query on consumer-topic")
 		})
 	})
 
 	Context("An event is produced", func() {
-		var responseConsumer *consumer.Consumer
+		var responseConsumer *kafka.Consumer
 
 		BeforeEach(func() {
 			var err error
 
 			if responseConsumer == nil {
-				consumerConfig := &consumer.Config{
-					ConsumerGroup: consumerGroupName,
-					KafkaBrokers:  *brokers,
-					Topics:        []string{responseTopic},
+				consumerConfig := &kafka.ConsumerConfig{
+					GroupName:    consumerGroupName,
+					KafkaBrokers: *brokers,
+					Topics:       []string{responseTopic},
 				}
-				responseConsumer, err = consumer.New(consumerConfig)
+				responseConsumer, err = kafka.NewConsumer(consumerConfig)
 				Expect(err).ToNot(HaveOccurred())
 			}
-		})
-
-		Specify("no errors should appear on response-consumer", func() {
-			go func() {
-				defer GinkgoRecover()
-				for consumerErr := range responseConsumer.Errors() {
-					Expect(consumerErr).ToNot(HaveOccurred())
-				}
-			}()
 		})
 
 		// This test will run in a go-routine, and must succeed within 10 seconds
@@ -156,31 +192,48 @@ var _ = Describe("EventQuery", func() {
 			func(done Done) {
 				log.Println(
 					"Checking if the Kafka response-topic received the event, " +
-						"with timeout of 10 seconds",
+						"with timeout of 15 seconds",
 				)
 
-				for msg := range responseConsumer.Messages() {
-					// Mark the message-offset since we do not want the
-					// same message to appear again in later tests.
-					responseConsumer.MarkOffset(msg, "")
-					err := responseConsumer.SaramaConsumerGroup().CommitOffsets()
-					Expect(err).ToNot(HaveOccurred())
+				// No errors should appear on response-consumer
+				go func() {
+					defer GinkgoRecover()
+					for consumerErr := range responseConsumer.Errors() {
+						Expect(consumerErr).ToNot(HaveOccurred())
+					}
+				}()
 
+				msgCallback := func(msg *sarama.ConsumerMessage) bool {
+					defer GinkgoRecover()
 					// Unmarshal the Kafka-Response
 					log.Println("An Event was received, now verifying")
 					response := &model.KafkaResponse{}
-					err = json.Unmarshal(msg.Value, response)
-
-					Expect(err).ToNot(HaveOccurred())
-					Expect(response.Error).To(BeEmpty())
-
-					// Unmarshal the Result from Kafka-Response
-					events := &[]model.Event{}
-					err = json.Unmarshal([]byte(response.Result), events)
+					err := json.Unmarshal(msg.Value, response)
 					Expect(err).ToNot(HaveOccurred())
 
-					close(done)
+					if response.UUID == mockEventStoreQuery.UUID {
+						Expect(response.CorrelationID).To(Equal(mockEventStoreQuery.CorrelationID))
+						Expect(response.Error).To(BeEmpty())
+						log.Println("Event matched expectation")
+
+						// Unmarshal the Result from Kafka-Response
+						events := []model.Event{}
+						err = json.Unmarshal(response.Result, &events)
+						Expect(err).ToNot(HaveOccurred())
+
+						return true
+					}
+					return false
 				}
-			}, 10)
+				handler := &msgHandler{msgCallback}
+				ctx, cancel := context.WithTimeout(
+					context.Background(),
+					time.Duration(15)*time.Second,
+				)
+				defer cancel()
+				responseConsumer.Consume(ctx, handler)
+				close(done)
+			}, 15,
+		)
 	})
 })

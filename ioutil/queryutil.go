@@ -3,8 +3,7 @@ package ioutil
 import (
 	"encoding/json"
 	"log"
-	"os"
-	"strconv"
+	"sort"
 
 	"github.com/TerrexTech/uuuid"
 
@@ -19,25 +18,23 @@ type QueryUtil struct {
 	// We don't keep these as method parameters due to convenience.
 	// Since these will not change once set, we only set them once.
 
-	// DBUtil provides convenient functions to get Aggregate data.
-	DBUtil DBUtilI
-	// ResponseChan is used to publish the processing response to Kafka response-topic.
-	ResponseChan chan<- *model.KafkaResponse
+	// EventStore provides convenient functions to get Aggregate data.
+	EventStore EventStore
+	BatchSize  int
 }
 
 // QueryHandler gets the Aggregate-Events.
 func (qu *QueryUtil) QueryHandler(
-	eventMetaPartnKey int8,
 	query *model.EventStoreQuery,
-) (*[]model.Event, error) {
+) ([]model.Event, error) {
 	// Get Aggregate Meta-Version
-	aggMetaVersion, err := qu.DBUtil.GetAggMetaVersion(eventMetaPartnKey, query)
+	aggMetaVersion, err := qu.EventStore.GetAggMetaVersion(query)
 	if err != nil {
 		err = errors.Wrap(err, "Error Getting Aggregate Meta-Version")
 		return nil, err
 	}
 
-	events, err := qu.DBUtil.GetAggEvents(query, aggMetaVersion)
+	events, err := qu.EventStore.GetAggEvents(query, aggMetaVersion)
 	if err != nil {
 		err = errors.Wrap(err, "Error While Fetching AggregateEvents")
 		return nil, err
@@ -50,38 +47,47 @@ func (qu *QueryUtil) QueryHandler(
 func (qu *QueryUtil) BatchProduce(
 	CorrelationID uuuid.UUID,
 	aggID int8,
-	events *[]model.Event,
-) {
-	defaultSize := 6
-	batchSize, err := strconv.Atoi(os.Getenv("KAFKA_EVENT_BATCH_SIZE"))
-	if err != nil {
-		err = errors.Wrap(err, "Error Getting Event-Producer BatchSize")
-		log.Println(err)
-		log.Printf("A default batch-size of %d will be used", defaultSize)
-		batchSize = defaultSize
-	}
+	events []model.Event,
+) []model.KafkaResponse {
+	batches := make([]model.KafkaResponse, 0)
 
-	for i := 0; i < len(*events); i += batchSize {
-		batchIndex := i + batchSize
-		if batchIndex > len(*events) {
-			batchIndex = len(*events)
+	// Sort events in scending order of their UUID-Timestamps
+	sort.Slice(events, func(i, j int) bool {
+		ti, err := uuuid.TimestampFromV1(events[i].TimeUUID)
+		if err != nil {
+			err = errors.Wrap(err, "Error sorting Events: Error getting T1")
+			log.Println(err)
 		}
+		tj, err := uuuid.TimestampFromV1(events[j].TimeUUID)
+		if err != nil {
+			err = errors.Wrap(err, "Error sorting Events: Error getting T2")
+			log.Println(err)
+		}
+		return ti < tj
+	})
 
-		eventsBatch := (*events)[i:batchIndex]
-		batchJSON, err := json.Marshal(eventsBatch)
+	for i := 0; i < len(events); i += qu.BatchSize {
+		batchEndIndex := i + qu.BatchSize
+		if batchEndIndex > len(events) {
+			batchEndIndex = len(events)
+		}
+		eventsBatch := events[i:batchEndIndex]
+
 		errStr := ""
+		batchJSON, err := json.Marshal(eventsBatch)
 		if err != nil {
 			err = errors.Wrapf(err, "Error Marshalling EventsBatch at index: %d", i)
 			errStr = err.Error()
 			log.Println(err)
+			return nil
 		}
 
-		kr := &model.KafkaResponse{
+		batches = append(batches, model.KafkaResponse{
 			AggregateID:   aggID,
 			CorrelationID: CorrelationID,
 			Error:         errStr,
 			Result:        batchJSON,
-		}
-		qu.ResponseChan <- kr
+		})
 	}
+	return batches
 }

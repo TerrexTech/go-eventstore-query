@@ -8,28 +8,44 @@ import (
 	"github.com/pkg/errors"
 )
 
-// DBUtilI provides convenience functions for getting Aggregate data
-type DBUtilI interface {
-	GetAggMetaVersion(
-		eventMetaPartnKey int8,
-		eventStoreQuery *model.EventStoreQuery,
-	) (int64, error)
+// EventStore provides convenience functions for getting Aggregate data.
+type EventStore interface {
+	GetAggMetaVersion(eventStoreQuery *model.EventStoreQuery) (int64, error)
 	GetAggEvents(
 		eventStoreQuery *model.EventStoreQuery,
 		eventMetaVersion int64,
-	) (*[]model.Event, error)
+	) ([]model.Event, error)
 }
 
-// DBUtil implements DBUtilI.
-// DBUtilI provides convenience functions for getting Aggregate data.
-type DBUtil struct {
-	EventMetaTable *csndra.Table
-	EventTable     *csndra.Table
+// eventStore is the implementation for EventStore.
+type eventStore struct {
+	eventMetaTable   *csndra.Table
+	eventTable       *csndra.Table
+	metaPartitionKey int8
+}
+
+// NewEventStore creates an EventStore.
+func NewEventStore(
+	eventTable *csndra.Table,
+	eventMetaTable *csndra.Table,
+	metaPartitionKey int8,
+) (EventStore, error) {
+	if eventTable == nil {
+		return nil, errors.New("eventTable cannot be nil")
+	}
+	if eventMetaTable == nil {
+		return nil, errors.New("eventMetaTable cannot be nil")
+	}
+
+	return &eventStore{
+		eventTable:       eventTable,
+		eventMetaTable:   eventMetaTable,
+		metaPartitionKey: metaPartitionKey,
+	}, nil
 }
 
 // GetAggMetaVersion gets the AggregateVersion from Events-Meta table.
-func (dbu *DBUtil) GetAggMetaVersion(
-	eventMetaPartnKey int8,
+func (es *eventStore) GetAggMetaVersion(
 	eventStoreQuery *model.EventStoreQuery,
 ) (int64, error) {
 	aggID := eventStoreQuery.AggregateID
@@ -38,14 +54,14 @@ func (dbu *DBUtil) GetAggMetaVersion(
 	}
 
 	resultsBind := []model.EventMeta{}
-	partnCol, err := dbu.EventMetaTable.Column("partitionKey")
+	partnCol, err := es.eventMetaTable.Column("partitionKey")
 	if err != nil {
 		return -1, fmt.Errorf(
 			"Error getting PartitionKey column from MetaTable for AggregateID %d",
 			aggID,
 		)
 	}
-	aggIDCol, err := dbu.EventMetaTable.Column("aggregateID")
+	aggIDCol, err := es.eventMetaTable.Column("aggregateID")
 	if err != nil {
 		return -1, fmt.Errorf(
 			"Error getting AggregateID column from MetaTable for AggregateID %d",
@@ -53,13 +69,13 @@ func (dbu *DBUtil) GetAggMetaVersion(
 		)
 	}
 
-	_, err = dbu.EventMetaTable.Select(csndra.SelectParams{
+	_, err = es.eventMetaTable.Select(csndra.SelectParams{
 		ResultsBind: &resultsBind,
 		ColumnValues: []csndra.ColumnComparator{
-			csndra.Comparator(partnCol, eventMetaPartnKey).Eq(),
+			csndra.Comparator(partnCol, es.metaPartitionKey).Eq(),
 			csndra.Comparator(aggIDCol, aggID).Eq(),
 		},
-		SelectColumns: dbu.EventMetaTable.Columns(),
+		SelectColumns: es.eventMetaTable.Columns(),
 	})
 
 	if err != nil {
@@ -68,7 +84,7 @@ func (dbu *DBUtil) GetAggMetaVersion(
 	}
 
 	if len(resultsBind) == 0 {
-		err = fmt.Errorf("No Aggregates found with ID: %d", aggID)
+		err = fmt.Errorf("no Aggregates found with ID: %d", aggID)
 		err = errors.Wrap(err, "Error Fetching AggregateVersion from EventMeta")
 		return -1, err
 	}
@@ -78,7 +94,7 @@ func (dbu *DBUtil) GetAggMetaVersion(
 	// Increment aggregate-version in event-meta table
 	result := resultsBind[0]
 	result.AggregateVersion++
-	err = <-dbu.EventMetaTable.AsyncInsert(&result)
+	err = <-es.eventMetaTable.AsyncInsert(&result)
 	if err != nil {
 		return -1, err
 	}
@@ -87,10 +103,10 @@ func (dbu *DBUtil) GetAggMetaVersion(
 }
 
 // GetAggEvents gets the AggregateEvents from Events table.
-func (dbu *DBUtil) GetAggEvents(
+func (es *eventStore) GetAggEvents(
 	eventStoreQuery *model.EventStoreQuery,
 	eventMetaVersion int64,
-) (*[]model.Event, error) {
+) ([]model.Event, error) {
 	aggID := eventStoreQuery.AggregateID
 	if aggID == 0 {
 		return nil, errors.New("AggregateID not specified")
@@ -100,22 +116,23 @@ func (dbu *DBUtil) GetAggEvents(
 		return nil, fmt.Errorf("AggregateVersion not specified for AggregateID: %d", aggID)
 	}
 
-	events := &[]model.Event{}
-	yearBucketCol, _ := dbu.EventTable.Column("yearBucket")
-	aggIDCol, _ := dbu.EventTable.Column("aggregateID")
-	versionCol, _ := dbu.EventTable.Column("version")
+	events := []model.Event{}
+	yearBucketCol, _ := es.eventTable.Column("yearBucket")
+	aggIDCol, _ := es.eventTable.Column("aggregateID")
+	versionCol, _ := es.eventTable.Column("version")
 
 	sp := csndra.SelectParams{
-		ResultsBind: events,
+		ResultsBind: &events,
 		ColumnValues: []csndra.ColumnComparator{
 			csndra.Comparator(yearBucketCol, eventStoreQuery.YearBucket).Eq(),
 			csndra.Comparator(aggIDCol, aggID).Eq(),
 			csndra.Comparator(versionCol, aggVersion).Gt(),
 			csndra.Comparator(versionCol, eventMetaVersion).LtOrEq(),
 		},
-		SelectColumns: dbu.EventTable.Columns(),
+		SelectColumns: es.eventTable.Columns(),
 	}
 
-	_, err := dbu.EventTable.Select(sp)
+	_, err := es.eventTable.Select(sp)
+	err = errors.Wrap(err, "Error in GetAggEvents")
 	return events, err
 }
