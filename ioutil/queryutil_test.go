@@ -190,7 +190,7 @@ var _ = Describe("QueryUtil", func() {
 					}
 					wg.Wait()
 					close(done)
-				}, 2000,
+				}, 20,
 			)
 		})
 	})

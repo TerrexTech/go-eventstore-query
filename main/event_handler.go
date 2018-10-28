@@ -4,23 +4,21 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
-	"time"
 
 	"github.com/TerrexTech/uuuid"
 
 	"github.com/Shopify/sarama"
 	"github.com/TerrexTech/go-eventstore-models/model"
 	"github.com/TerrexTech/go-eventstore-query/ioutil"
-	"github.com/TerrexTech/go-kafkautils/kafka"
 	"github.com/pkg/errors"
 )
 
 // EventHandlerConfig is the configuration for EventsConsumer.
 type EventHandlerConfig struct {
-	EventStore       ioutil.EventStore
-	QueryUtil        *ioutil.QueryUtil
-	ResponseProducer *kafka.Producer
-	ResponseTopic    string
+	EventStore    ioutil.EventStore
+	QueryUtil     *ioutil.QueryUtil
+	ResponseChan  chan<- *model.KafkaResponse
+	ResponseTopic string
 }
 
 // eventHandler handler for Consumer Messages
@@ -33,8 +31,8 @@ func NewEventHandler(config EventHandlerConfig) (sarama.ConsumerGroupHandler, er
 	if config.EventStore == nil {
 		return nil, errors.New("invalid config: EventStore cannot be nil")
 	}
-	if config.ResponseProducer == nil {
-		return nil, errors.New("invalid config: ResponseProducer cannot be nil")
+	if config.ResponseChan == nil {
+		return nil, errors.New("invalid config: ResponseChan cannot be nil")
 	}
 	if config.ResponseTopic == "" {
 		return nil, errors.New("invalid config: ResponseTopic cannot be blank")
@@ -91,17 +89,8 @@ func (e *eventHandler) ConsumeClaim(
 					Error:         err.Error(),
 					UUID:          esQuery.UUID,
 				}
-				resp, err := json.Marshal(kr)
-				if err != nil {
-					err = errors.Wrap(err, "EmptyUUID Error: Error Marshalling KafkaResponse")
-					log.Println(err)
-				} else {
-					responseTopic := fmt.Sprintf(
-						"%s.%d", e.config.ResponseTopic, esQuery.AggregateID,
-					)
-					respMsg := kafka.CreateMessage(responseTopic, resp)
-					e.config.ResponseProducer.Input() <- respMsg
-				}
+				kr.Topic = fmt.Sprintf("%s.%d", e.config.ResponseTopic, esQuery.AggregateID)
+				e.config.ResponseChan <- kr
 				return
 			}
 
@@ -114,17 +103,8 @@ func (e *eventHandler) ConsumeClaim(
 					CorrelationID: esQuery.CorrelationID,
 					Error:         err.Error(),
 				}
-				resp, err := json.Marshal(kr)
-				if err != nil {
-					err = errors.Wrap(err, "QueryHandler Error: Error Marshalling KafkaResponse")
-					log.Println(err)
-				} else {
-					responseTopic := fmt.Sprintf(
-						"%s.%d", e.config.ResponseTopic, esQuery.AggregateID,
-					)
-					respMsg := kafka.CreateMessage(responseTopic, resp)
-					e.config.ResponseProducer.Input() <- respMsg
-				}
+				kr.Topic = fmt.Sprintf("%s.%d", e.config.ResponseTopic, esQuery.AggregateID)
+				e.config.ResponseChan <- kr
 				return
 			}
 			batch := e.config.QueryUtil.BatchProduce(
@@ -134,19 +114,9 @@ func (e *eventHandler) ConsumeClaim(
 			for _, kr := range batch {
 				kr.UUID = esQuery.UUID
 				kr.CorrelationID = esQuery.CorrelationID
-				resp, err := json.Marshal(kr)
-				if err != nil {
-					err = errors.Wrap(err, "EmptyUUID Error: Error Marshalling KafkaResponse")
-					log.Println(err)
-				} else {
-					responseTopic := fmt.Sprintf(
-						"%s.%d", e.config.ResponseTopic, esQuery.AggregateID,
-					)
-					respMsg := kafka.CreateMessage(responseTopic, resp)
-					// A backoff, because sometimes message becomes too large for Kafka and causes error
-					time.Sleep(1 * time.Millisecond)
-					e.config.ResponseProducer.Input() <- respMsg
-				}
+
+				kr.Topic = fmt.Sprintf("%s.%d", e.config.ResponseTopic, esQuery.AggregateID)
+				e.config.ResponseChan <- &kr
 			}
 		}(session, msg)
 	}

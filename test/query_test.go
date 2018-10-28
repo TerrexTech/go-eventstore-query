@@ -186,7 +186,7 @@ var _ = Describe("EventQuery", func() {
 			}
 		})
 
-		// This test will run in a go-routine, and must succeed within 10 seconds
+		// This test will run in a go-routine, and must succeed within 15 seconds
 		Specify(
 			"the mock-event processing-result should appear on Kafka response-topic",
 			func(done Done) {
@@ -220,7 +220,6 @@ var _ = Describe("EventQuery", func() {
 						events := []model.Event{}
 						err = json.Unmarshal(response.Result, &events)
 						Expect(err).ToNot(HaveOccurred())
-
 						return true
 					}
 					return false

@@ -2,9 +2,12 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"log"
 	"os"
 	"strconv"
+
+	"github.com/TerrexTech/go-eventstore-models/model"
 
 	"github.com/TerrexTech/go-eventstore-query/ioutil"
 	"github.com/TerrexTech/go-kafkautils/kafka"
@@ -82,6 +85,7 @@ func main() {
 	}()
 
 	// Response Producer
+	responseChan := make(chan *model.KafkaResponse)
 	responseProducer, err := kafka.NewProducer(&kafka.ProducerConfig{
 		KafkaBrokers: brokers,
 	})
@@ -100,6 +104,19 @@ func main() {
 					"The service will now exit.",
 			)
 			log.Fatalln(err)
+		}
+	}()
+
+	go func() {
+		for kr := range responseChan {
+			resp, err := json.Marshal(kr)
+			if err != nil {
+				err = errors.Wrap(err, "ServiceResponse: Error Marshalling KafkaResponse")
+				log.Println(err)
+			} else {
+				respMsg := kafka.CreateMessage(kr.Topic, resp)
+				responseProducer.Input() <- respMsg
+			}
 		}
 	}()
 
@@ -148,10 +165,10 @@ func main() {
 	responseTopic := os.Getenv("KAFKA_RESPONSE_TOPIC")
 
 	handler, err := NewEventHandler(EventHandlerConfig{
-		EventStore:       eventStore,
-		QueryUtil:        queryUtil,
-		ResponseProducer: responseProducer,
-		ResponseTopic:    responseTopic,
+		EventStore:    eventStore,
+		QueryUtil:     queryUtil,
+		ResponseChan:  (chan<- *model.KafkaResponse)(responseChan),
+		ResponseTopic: responseTopic,
 	})
 	if err != nil {
 		err = errors.Wrap(err, "Error while initializing EventHandler")
