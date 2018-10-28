@@ -41,12 +41,12 @@
   version = "v3.0.0"
 
 [[projects]]
-  digest = "1:f5e8cdbab97b9fc1012419c49d9d2681975d028497a709ecdc07927889161025"
+  digest = "1:017b08c994a864ea4e94f1837037c14087f784a1e99d54173eba9050f7a81f74"
   name = "github.com/TerrexTech/go-kafkautils"
   packages = ["kafka"]
   pruneopts = "UT"
-  revision = "dc9eaa20ef7d0d5e78c30a903b938e965f3da27e"
-  version = "v3.0.0"
+  revision = "edd8ae664676b83ca85b9a6bb75811a14ccf0971"
+  version = "v3.1.0"
 
 [[projects]]
   digest = "1:d60c04290d42fa9b1b2c8aa1856bf7d7bc77af402e7f9a7e2d1c00c5df906d7e"
@@ -90,7 +90,7 @@
 
 [[projects]]
   branch = "master"
-  digest = "1:e507a0752b9e3834730cd1f4eae689dd70f9c2e3bb98d0e697ca1b40ca806c4d"
+  digest = "1:a846553de719c4ddf7620bb3281d503e8d4a8218b177134e2fadae66f2268522"
   name = "github.com/gocql/gocql"
   packages = [
     ".",
@@ -99,7 +99,7 @@
     "internal/streams",
   ]
   pruneopts = "UT"
-  revision = "6832a796414d0414fbf83e36eec80a84e0dd6ade"
+  revision = "4f69018263790716223863c130edd6d3814cf559"
 
 [[projects]]
   digest = "1:ce579162ae1341f3e5ab30c0dce767f28b1eb6a81359aad01723f1ba6b4becdf"
@@ -244,15 +244,15 @@
     "html/charset",
   ]
   pruneopts = "UT"
-  revision = "04a2e542c03f1d053ab3e4d6e5abcd4b66e2be8e"
+  revision = "9b4f9f5ad5197c79fd623a3638e70d8b26cef344"
 
 [[projects]]
   branch = "master"
-  digest = "1:be4f165c438aa39318fd5c8c180a95f4a52524641c0b714638b0fd9fd912b38d"
+  digest = "1:f22e437d9328275884d0ae018ed0de4c280871c944a5ab332aa37fd71fb5801b"
   name = "golang.org/x/sys"
   packages = ["unix"]
   pruneopts = "UT"
-  revision = "8e24a49d80f82323e1c4db1b5da3e0f31171a151"
+  revision = "95b1ffbd15a57cc5abb3f04402b9e8ec0016a52c"
 
 [[projects]]
   digest = "1:aa4d6967a3237f8367b6bf91503964a77183ecf696f1273e8ad3551bb4412b5f"
