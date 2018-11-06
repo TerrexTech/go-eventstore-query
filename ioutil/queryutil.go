@@ -2,12 +2,10 @@ package ioutil
 
 import (
 	"encoding/json"
-	"log"
 	"sort"
 
-	"github.com/TerrexTech/uuuid"
-
 	"github.com/TerrexTech/go-eventstore-models/model"
+	"github.com/TerrexTech/uuuid"
 	"github.com/pkg/errors"
 )
 
@@ -42,27 +40,19 @@ func (qu *QueryUtil) QueryHandler(
 	return events, nil
 }
 
-// BatchProduce produces the provided events in chunks of sizes set as per the env-var
+// CreateBatch produces the provided events in chunks of sizes set as per the env-var
 // "KAFKA_EVENT_BATCH_SIZE". If this value is missing, the default batch value if 6.
-func (qu *QueryUtil) BatchProduce(
-	CorrelationID uuuid.UUID,
+func (qu *QueryUtil) CreateBatch(
+	correlationID uuuid.UUID,
 	aggID int8,
 	events []model.Event,
 ) []model.KafkaResponse {
 	batches := make([]model.KafkaResponse, 0)
 
-	// Sort events in scending order of their UUID-Timestamps
+	// Sort events in scending order of their Nano-Timestamps
 	sort.Slice(events, func(i, j int) bool {
-		ti, err := uuuid.TimestampFromV1(events[i].TimeUUID)
-		if err != nil {
-			err = errors.Wrap(err, "Error sorting Events: Error getting T1")
-			log.Println(err)
-		}
-		tj, err := uuuid.TimestampFromV1(events[j].TimeUUID)
-		if err != nil {
-			err = errors.Wrap(err, "Error sorting Events: Error getting T2")
-			log.Println(err)
-		}
+		ti := events[i].NanoTime
+		tj := events[j].NanoTime
 		return ti < tj
 	})
 
@@ -74,17 +64,18 @@ func (qu *QueryUtil) BatchProduce(
 		eventsBatch := events[i:batchEndIndex]
 
 		errStr := ""
+		var errCode int16
 		batchJSON, err := json.Marshal(eventsBatch)
 		if err != nil {
 			err = errors.Wrapf(err, "Error Marshalling EventsBatch at index: %d", i)
 			errStr = err.Error()
-			log.Println(err)
-			return nil
+			errCode = 1
 		}
 
 		batches = append(batches, model.KafkaResponse{
 			AggregateID:   aggID,
-			CorrelationID: CorrelationID,
+			CorrelationID: correlationID,
+			ErrorCode:     errCode,
 			Error:         errStr,
 			Result:        batchJSON,
 		})

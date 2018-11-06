@@ -6,7 +6,7 @@ echo "===> Changing directory to \"./test\""
 docker-compose up -d --build cassandra kafka
 
 function ping_cassandra() {
-  docker exec -it cassandra /opt/bitnami/cassandra/bin/nodetool status | grep UN
+  docker exec -it cassandra /usr/bin/nodetool status | grep UN
   res=$?
 }
 
@@ -35,7 +35,7 @@ fi
 # nodetool-status being success.
 # There has to be a better way than this.
 echo "Waiting additional time for Cassandra to be ready."
-add_wait=40
+add_wait=30
 cur_add_wait=0
 while (( ++cur_add_wait != add_wait ))
 do
@@ -56,5 +56,9 @@ echo "Waiting for Go-API Sessions to initialize"
 sleep 5
 
 # Run Kafka tests
-docker-compose up --build go-eventstore-query-test
-exit $?
+docker-compose up --exit-code-from go-eventstore-query-test
+rc=$?
+if [[ $rc != 0 ]]
+  docker ps -a
+  then exit $rc
+fi

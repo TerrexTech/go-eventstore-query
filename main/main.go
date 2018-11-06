@@ -3,17 +3,18 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log"
 	"os"
 	"strconv"
 
 	"github.com/TerrexTech/go-eventstore-models/model"
 
-	"github.com/TerrexTech/go-eventstore-query/ioutil"
-	"github.com/TerrexTech/go-kafkautils/kafka"
-
 	"github.com/TerrexTech/go-commonutils/commonutil"
 	"github.com/TerrexTech/go-eventstore-models/bootstrap"
+	"github.com/TerrexTech/go-eventstore-query/ioutil"
+	"github.com/TerrexTech/go-kafkautils/kafka"
+	tlog "github.com/TerrexTech/go-logtransport/log"
 	"github.com/joho/godotenv"
 	"github.com/pkg/errors"
 )
@@ -31,6 +32,9 @@ func validateEnv() {
 	}
 
 	missingVar, err := commonutil.ValidateEnv(
+		"SERVICE_NAME",
+		"KAFKA_LOG_PRODUCER_TOPIC",
+
 		"CASSANDRA_HOSTS",
 		"CASSANDRA_DATA_CENTERS",
 		"CASSANDRA_KEYSPACE",
@@ -60,6 +64,19 @@ func main() {
 	consumerGroup := os.Getenv("KAFKA_CONSUMER_GROUP")
 	esQueryTopicStr := os.Getenv("KAFKA_CONSUMER_TOPICS")
 	esQueryTopic := *commonutil.ParseHosts(esQueryTopicStr)
+
+	logTopic := os.Getenv("KAFKA_LOG_PRODUCER_TOPIC")
+	serviceName := os.Getenv("SERVICE_NAME")
+
+	prodConfig := &kafka.ProducerConfig{
+		KafkaBrokers: brokers,
+	}
+	logger, err := tlog.Init(nil, serviceName, prodConfig, logTopic)
+	if err != nil {
+		err = errors.Wrap(err, "Error initializing Logger")
+		log.Fatalln(err)
+	}
+
 	// EventStoreQuery Consumer
 	esQueryConsumer, err := kafka.NewConsumer(&kafka.ConsumerConfig{
 		GroupName:    consumerGroup,
@@ -68,42 +85,47 @@ func main() {
 	})
 	if err != nil {
 		err = errors.Wrap(err, "Error creating Kafka Event-Consumer")
-		log.Fatalln(err)
+		logger.F(tlog.Entry{
+			Description: err.Error(),
+			ErrorCode:   1,
+		})
 	}
 
 	// Handle Consumer Errors
 	go func() {
 		for err := range esQueryConsumer.Errors() {
 			err = errors.Wrap(err, "Kafka Consumer Error")
-			log.Println(
-				"Error in event consumer. " +
+			logger.I(tlog.Entry{
+				Description: "Error in event consumer. " +
 					"The queries cannot be consumed without a working Kafka Consumer. " +
 					"The service will now exit.",
-			)
-			log.Fatalln(err)
+			})
+			logger.F(tlog.Entry{
+				Description: err.Error(),
+				ErrorCode:   1,
+			})
 		}
 	}()
 
 	// Response Producer
 	responseChan := make(chan *model.KafkaResponse)
-	responseProducer, err := kafka.NewProducer(&kafka.ProducerConfig{
-		KafkaBrokers: brokers,
-	})
+	responseProducer, err := kafka.NewProducer(prodConfig)
 	if err != nil {
 		err = errors.Wrap(err, "Error creating Kafka Response-Producer")
-		log.Fatalln(err)
+		logger.F(tlog.Entry{
+			Description: err.Error(),
+			ErrorCode:   1,
+		})
 	}
 
 	// Handle Producer Errors
 	go func() {
 		for prodErr := range responseProducer.Errors() {
 			err = errors.Wrap(prodErr.Err, "Kafka Producer Error")
-			log.Println(
-				"Error in response producer. " +
-					"The responses cannot be produced without a working Kafka Producer. " +
-					"The service will now exit.",
-			)
-			log.Fatalln(err)
+			logger.E(tlog.Entry{
+				Description: err.Error(),
+				ErrorCode:   1,
+			})
 		}
 	}()
 
@@ -112,26 +134,46 @@ func main() {
 			resp, err := json.Marshal(kr)
 			if err != nil {
 				err = errors.Wrap(err, "ServiceResponse: Error Marshalling KafkaResponse")
-				log.Println(err)
+				logger.E(tlog.Entry{
+					Description: err.Error(),
+					ErrorCode:   1,
+				})
+				logger.D(tlog.Entry{
+					Description: "KafkaResponse received was:",
+					ErrorCode:   1,
+				}, kr)
 			} else {
 				respMsg := kafka.CreateMessage(kr.Topic, resp)
+				logger.D(tlog.Entry{
+					Description: fmt.Sprintf("Produced ESQuery-Response with ID: %s", kr.UUID),
+				}, kr)
 				responseProducer.Input() <- respMsg
 			}
 		}
 	}()
 
 	// ======> Create/Load Cassandra Keyspace/Tables
-	log.Println("Bootstrapping Event table")
+	logger.I(tlog.Entry{
+		Description: "Bootstrapping Event table",
+	})
 	eventTable, err := bootstrap.Event()
 	if err != nil {
 		err = errors.Wrap(err, "EventTable: Error getting Table")
-		log.Fatalln(err)
+		logger.F(tlog.Entry{
+			Description: err.Error(),
+			ErrorCode:   1,
+		})
 	}
-	log.Println("Bootstrapping EventMeta table")
+	logger.I(tlog.Entry{
+		Description: "Bootstrapping EventMeta table",
+	})
 	eventMetaTable, err := bootstrap.EventMeta()
 	if err != nil {
 		err = errors.Wrap(err, "EventMetaTable: Error getting Table")
-		log.Fatalln(err)
+		logger.F(tlog.Entry{
+			Description: err.Error(),
+			ErrorCode:   1,
+		})
 	}
 
 	// ======> Setup EventStore
@@ -139,22 +181,38 @@ func main() {
 	metaPartitionKey, err := strconv.Atoi(os.Getenv(pKeyVar))
 	if err != nil {
 		err = errors.Wrap(err, pKeyVar+" must be a valid integer")
-		log.Fatalln(err)
+		logger.F(tlog.Entry{
+			Description: err.Error(),
+			ErrorCode:   1,
+		})
 	}
 
-	eventStore, err := ioutil.NewEventStore(eventTable, eventMetaTable, int8(metaPartitionKey))
+	eventStore, err := ioutil.NewEventStore(
+		eventTable,
+		eventMetaTable,
+		int8(metaPartitionKey),
+	)
 	if err != nil {
 		err = errors.Wrap(err, "Error while initializing EventStore")
-		log.Fatalln(err)
+		logger.F(tlog.Entry{
+			Description: err.Error(),
+			ErrorCode:   1,
+		})
 	}
 
 	// ======> Setup EventHandler
 	defaultSize := 6
-	batchSize, err := strconv.Atoi(os.Getenv("KAFKA_EVENT_BATCH_SIZE"))
+	batchSizeEnv := os.Getenv("KAFKA_EVENT_BATCH_SIZE")
+	batchSize, err := strconv.Atoi(batchSizeEnv)
 	if err != nil {
 		err = errors.Wrap(err, "Error Getting Event-Producer BatchSize")
-		log.Println(err)
-		log.Printf("A default batch-size of %d will be used", defaultSize)
+		logger.E(tlog.Entry{
+			Description: err.Error(),
+			ErrorCode:   1,
+		})
+		logger.D(tlog.Entry{
+			Description: fmt.Sprintf("Batch-Size used: %d", defaultSize),
+		})
 		batchSize = defaultSize
 	}
 
@@ -166,20 +224,29 @@ func main() {
 
 	handler, err := NewEventHandler(EventHandlerConfig{
 		EventStore:    eventStore,
+		Logger:        logger,
 		QueryUtil:     queryUtil,
 		ResponseChan:  (chan<- *model.KafkaResponse)(responseChan),
 		ResponseTopic: responseTopic,
 	})
 	if err != nil {
 		err = errors.Wrap(err, "Error while initializing EventHandler")
-		log.Fatalln(err)
+		logger.F(tlog.Entry{
+			Description: err.Error(),
+			ErrorCode:   1,
+		})
 	}
 
-	log.Println("EventStoreQuery Service Initialized")
+	logger.I(tlog.Entry{
+		Description: "EventStoreQuery Service Initialized",
+	})
 
 	err = esQueryConsumer.Consume(context.Background(), handler)
 	if err != nil {
 		err = errors.Wrap(err, "Error while attempting to consume Events")
-		log.Fatalln(err)
+		logger.F(tlog.Entry{
+			Description: err.Error(),
+			ErrorCode:   1,
+		})
 	}
 }
