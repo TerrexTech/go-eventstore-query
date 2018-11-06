@@ -3,7 +3,8 @@ package main
 import (
 	"encoding/json"
 	"fmt"
-	"log"
+
+	tlog "github.com/TerrexTech/go-logtransport/log"
 
 	"github.com/TerrexTech/uuuid"
 
@@ -16,6 +17,7 @@ import (
 // EventHandlerConfig is the configuration for EventsConsumer.
 type EventHandlerConfig struct {
 	EventStore    ioutil.EventStore
+	Logger        tlog.Logger
 	QueryUtil     *ioutil.QueryUtil
 	ResponseChan  chan<- *model.KafkaResponse
 	ResponseTopic string
@@ -31,6 +33,9 @@ func NewEventHandler(config EventHandlerConfig) (sarama.ConsumerGroupHandler, er
 	if config.EventStore == nil {
 		return nil, errors.New("invalid config: EventStore cannot be nil")
 	}
+	if config.Logger == nil {
+		return nil, errors.New("invalid config: Logger cannot be nil")
+	}
 	if config.ResponseChan == nil {
 		return nil, errors.New("invalid config: ResponseChan cannot be nil")
 	}
@@ -41,13 +46,19 @@ func NewEventHandler(config EventHandlerConfig) (sarama.ConsumerGroupHandler, er
 	return &eventHandler{config}, nil
 }
 
-func (*eventHandler) Setup(sarama.ConsumerGroupSession) error {
-	log.Println("Initializing Kafka EventHandler")
+func (e *eventHandler) Setup(sarama.ConsumerGroupSession) error {
+	logDesc := "Initializing Kafka EventHandler"
+	e.config.Logger.I(tlog.Entry{
+		Description: logDesc,
+	})
 	return nil
 }
 
-func (*eventHandler) Cleanup(sarama.ConsumerGroupSession) error {
-	log.Println("Closing Kafka EventHandler")
+func (e *eventHandler) Cleanup(sarama.ConsumerGroupSession) error {
+	logDesc := "Closing Kafka EventHandler"
+	e.config.Logger.I(tlog.Entry{
+		Description: logDesc,
+	})
 	return nil
 }
 
@@ -55,32 +66,49 @@ func (e *eventHandler) ConsumeClaim(
 	session sarama.ConsumerGroupSession,
 	claim sarama.ConsumerGroupClaim,
 ) error {
-	log.Println("Listening for new Events...")
+	logger := e.config.Logger
+
+	logger.I(tlog.Entry{
+		Description: "Listening for new Events...",
+	})
+
 	for msg := range claim.Messages() {
 		go func(session sarama.ConsumerGroupSession, msg *sarama.ConsumerMessage) {
 			esQuery := &model.EventStoreQuery{}
 			err := json.Unmarshal(msg.Value, esQuery)
 			if err != nil {
 				err = errors.Wrap(err, "Error: unable to Unmarshal Event")
-				log.Println(err)
+				logger.E(tlog.Entry{
+					Description: err.Error(),
+					ErrorCode:   1,
+				})
 
 				session.MarkMessage(msg, "")
 				return
 			}
-			log.Printf("Received Query with ID: %s", esQuery.UUID)
+
+			logger.I(tlog.Entry{
+				Description: fmt.Sprintf("Received Query with ID: %s", esQuery.UUID),
+			})
 
 			// =====> Validate Query
 			if esQuery.AggregateID == 0 {
 				err = errors.New("received a Query with missing AggregateID")
-				log.Println(err)
+				logger.E(tlog.Entry{
+					Description: err.Error(),
+					ErrorCode:   1,
+				})
 
 				session.MarkMessage(msg, "")
 				return
 			}
-			if esQuery.UUID.String() == (uuuid.UUID{}).String() {
+			if esQuery.UUID == (uuuid.UUID{}) {
 				session.MarkMessage(msg, "")
 				err = errors.New("received a Query with missing UUID")
-				log.Println(err)
+				logger.E(tlog.Entry{
+					Description: err.Error(),
+					ErrorCode:   1,
+				})
 
 				kr := &model.KafkaResponse{
 					AggregateID:   esQuery.AggregateID,
@@ -91,13 +119,19 @@ func (e *eventHandler) ConsumeClaim(
 				}
 				kr.Topic = fmt.Sprintf("%s.%d", e.config.ResponseTopic, esQuery.AggregateID)
 				e.config.ResponseChan <- kr
+				logger.D(tlog.Entry{
+					Description: "Produced response on topic",
+				}, kr.Topic, kr)
 				return
 			}
 
 			events, err := e.config.QueryUtil.QueryHandler(esQuery)
 			if err != nil {
 				err = errors.Wrap(err, "Error Processing Query")
-				log.Println(err)
+				logger.E(tlog.Entry{
+					Description: err.Error(),
+					ErrorCode:   1,
+				})
 				kr := &model.KafkaResponse{
 					AggregateID:   esQuery.AggregateID,
 					CorrelationID: esQuery.CorrelationID,
@@ -105,10 +139,14 @@ func (e *eventHandler) ConsumeClaim(
 				}
 				kr.Topic = fmt.Sprintf("%s.%d", e.config.ResponseTopic, esQuery.AggregateID)
 				e.config.ResponseChan <- kr
+				logger.D(tlog.Entry{
+					Description: "Produced response on topic",
+				}, kr.Topic, kr)
 				return
 			}
-			batch := e.config.QueryUtil.BatchProduce(
-				esQuery.CorrelationID, esQuery.AggregateID,
+			batch := e.config.QueryUtil.CreateBatch(
+				esQuery.CorrelationID,
+				esQuery.AggregateID,
 				events,
 			)
 			for _, kr := range batch {
@@ -117,6 +155,23 @@ func (e *eventHandler) ConsumeClaim(
 
 				kr.Topic = fmt.Sprintf("%s.%d", e.config.ResponseTopic, esQuery.AggregateID)
 				e.config.ResponseChan <- &kr
+
+				if kr.Error != "" {
+					logger.E(tlog.Entry{
+						Description:   kr.Error,
+						ErrorCode:     int(kr.ErrorCode),
+						EventAction:   kr.EventAction,
+						ServiceAction: kr.ServiceAction,
+					})
+				}
+
+				logger.D(tlog.Entry{
+					Description: fmt.Sprintf(
+						`Produced batch-response with UUID: "%s" on Topic: "%s"`,
+						kr.UUID,
+						kr.Topic,
+					),
+				}, kr)
 			}
 		}(session, msg)
 	}

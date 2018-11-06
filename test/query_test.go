@@ -76,7 +76,7 @@ var _ = Describe("EventQuery", func() {
 			Expect(err).ToNot(HaveOccurred())
 
 			// Add some test-data
-			uuid, err := uuuid.NewV1()
+			uuid, err := uuuid.NewV4()
 			Expect(err).ToNot(HaveOccurred())
 
 			eventTable, err := bootstrap.Event()
@@ -87,23 +87,23 @@ var _ = Describe("EventQuery", func() {
 				YearBucket:  2018,
 				Data:        []byte("test"),
 				UserUUID:    uuid,
-				Timestamp:   time.Now(),
-				TimeUUID:    uuid,
-				Action:      "insert",
+				NanoTime:    time.Now().UnixNano(),
+				UUID:        uuid,
+				EventAction: "insert",
 			}
 			err = <-eventTable.AsyncInsert(mockEvent)
 			Expect(err).ToNot(HaveOccurred())
 			// Insert some varied versions for testing
-			uuid, err = uuuid.NewV1()
+			uuid, err = uuuid.NewV4()
 			Expect(err).ToNot(HaveOccurred())
-			mockEvent.TimeUUID = uuid
+			mockEvent.UUID = uuid
 			mockEvent.Version = 11
 			err = <-eventTable.AsyncInsert(&mockEvent)
 			Expect(err).ToNot(HaveOccurred())
 
-			uuid, err = uuuid.NewV1()
+			uuid, err = uuuid.NewV4()
 			Expect(err).ToNot(HaveOccurred())
-			mockEvent.TimeUUID = uuid
+			mockEvent.UUID = uuid
 			mockEvent.Version = 13
 			err = <-eventTable.AsyncInsert(&mockEvent)
 			Expect(err).ToNot(HaveOccurred())

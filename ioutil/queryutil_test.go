@@ -25,7 +25,7 @@ var _ = Describe("QueryUtil", func() {
 		mockEventStoreQuery *model.EventStoreQuery
 	)
 	var genEvent = func(version int64) *model.Event {
-		uuid, err := uuuid.NewV1()
+		uuid, err := uuuid.NewV4()
 		Expect(err).ToNot(HaveOccurred())
 
 		return &model.Event{
@@ -34,9 +34,9 @@ var _ = Describe("QueryUtil", func() {
 			YearBucket:  2018,
 			Data:        []byte("test"),
 			UserUUID:    uuid,
-			Timestamp:   time.Now(),
-			TimeUUID:    uuid,
-			Action:      "insert",
+			NanoTime:    time.Now().UnixNano(),
+			UUID:        uuid,
+			EventAction: "insert",
 		}
 	}
 
@@ -164,9 +164,7 @@ var _ = Describe("QueryUtil", func() {
 							for _, re := range resEvents {
 								matches := false
 								for _, e := range mockEvents {
-									// Convert timestamps to consistent formats
-									re.Timestamp = time.Unix(re.Timestamp.Unix(), 0)
-									e.Timestamp = time.Unix(e.Timestamp.Unix(), 0)
+									// Convert NanoTimes to consistent formats
 									matches = reflect.DeepEqual(re, e)
 									if matches {
 										matchCount++
@@ -183,7 +181,7 @@ var _ = Describe("QueryUtil", func() {
 					}()
 
 					// BatchEvents produced here
-					krs := qu.BatchProduce(uuuid.UUID{}, 37, mockEvents)
+					krs := qu.CreateBatch(uuuid.UUID{}, 37, mockEvents)
 					// Pass KafkaResponse
 					for _, kr := range krs {
 						responseChan <- &kr

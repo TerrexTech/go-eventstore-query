@@ -34,16 +34,16 @@ services:
       KAFKA_BROKERS: kafka:9092
 
   cassandra:
-    image: bitnami/cassandra:latest
+    image: cassandra:latest
     container_name: cassandra
     ports:
       - "9042:9042"
 
   kafka:
-    image: confluent/kafka
+    image: wurstmeister/kafka
     container_name: kafka
     environment:
-      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
+      KAFKA_LISTENERS: PLAINTEXT://kafka:9092
       KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
     links:
       - zookeeper
@@ -51,7 +51,7 @@ services:
      - "9092:9092"
 
   zookeeper:
-    image: zookeeper
+    image: wurstmeister/zookeeper
     container_name: zookeeper
     ports:
-      - 2181:2181
+      - "2181:2181"

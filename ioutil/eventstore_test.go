@@ -192,7 +192,7 @@ var _ = Describe("EventStore", func() {
 		BeforeEach(func() {
 			// This resets the event-meta row to initial value
 			aggID = 12
-			uuid, err := uuuid.NewV1()
+			uuid, err := uuuid.NewV4()
 			Expect(err).ToNot(HaveOccurred())
 
 			mockEvent = model.Event{
@@ -201,9 +201,9 @@ var _ = Describe("EventStore", func() {
 				YearBucket:  2018,
 				Data:        []byte("test"),
 				UserUUID:    uuid,
-				Timestamp:   time.Now(),
-				TimeUUID:    uuid,
-				Action:      "insert",
+				NanoTime:    time.Now().UnixNano(),
+				UUID:        uuid,
+				EventAction: "insert",
 			}
 			err = <-eventTable.AsyncInsert(&mockEvent)
 			Expect(err).ToNot(HaveOccurred())
@@ -232,14 +232,10 @@ var _ = Describe("EventStore", func() {
 
 			e0 := events[0]
 			mockEvent.Version = 13
-			// Convert timestamps to consistent formats
-			mockEvent.Timestamp = time.Unix(mockEvent.Timestamp.Unix(), 0)
-			e0.Timestamp = time.Unix(e0.Timestamp.Unix(), 0)
 			Expect(reflect.DeepEqual(e0, mockEvent)).To(BeTrue())
 
 			e1 := events[1]
 			mockEvent.Version = 11
-			e1.Timestamp = time.Unix(e1.Timestamp.Unix(), 0)
 			Expect(reflect.DeepEqual(e1, mockEvent)).To(BeTrue())
 		})
 
