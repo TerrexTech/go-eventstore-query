@@ -43,9 +43,6 @@ do
   sleep 1
 done
 
-# Unit tests
-go test -v ./...
-
 docker-compose up -d --build go-eventstore-query
 rc=$?
 if [[ $rc != 0 ]]
