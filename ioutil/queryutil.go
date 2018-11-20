@@ -4,7 +4,8 @@ import (
 	"encoding/json"
 	"sort"
 
-	"github.com/TerrexTech/go-eventstore-models/model"
+	"github.com/TerrexTech/go-common-models/model"
+	tlog "github.com/TerrexTech/go-logtransport/log"
 	"github.com/TerrexTech/uuuid"
 	"github.com/pkg/errors"
 )
@@ -13,12 +14,29 @@ import (
 // This fetches the new Aggregate-Events, updates the Aggregate version in Events-Meta
 // table, and sends those events in batches to the Kafka response-topic.
 type QueryUtil struct {
-	// We don't keep these as method parameters due to convenience.
-	// Since these will not change once set, we only set them once.
-
 	// EventStore provides convenient functions to get Aggregate data.
 	EventStore EventStore
 	BatchSize  int
+	Logger     tlog.Logger
+}
+
+// NewQueryUtil creates an QueryUtil.
+func NewQueryUtil(es EventStore, batchSize int, logger tlog.Logger) (*QueryUtil, error) {
+	if es == nil {
+		return nil, errors.New("config error: EventStore cannot be nil")
+	}
+	if batchSize == 0 {
+		return nil, errors.New("config error: BatchSize must be >0")
+	}
+	if logger == nil {
+		return nil, errors.New("config error: Logger cannot be nil")
+	}
+
+	return &QueryUtil{
+		EventStore: es,
+		BatchSize:  batchSize,
+		Logger:     logger,
+	}, nil
 }
 
 // QueryHandler gets the Aggregate-Events.
@@ -26,13 +44,18 @@ func (qu *QueryUtil) QueryHandler(
 	query *model.EventStoreQuery,
 ) ([]model.Event, error) {
 	// Get Aggregate Meta-Version
-	aggMetaVersion, err := qu.EventStore.GetAggMetaVersion(query)
+	aggMetaVersion, err := qu.EventStore.GetAggMetaVersion(query.AggregateID)
 	if err != nil {
 		err = errors.Wrap(err, "Error Getting Aggregate Meta-Version")
 		return nil, err
 	}
 
-	events, err := qu.EventStore.GetAggEvents(query, aggMetaVersion)
+	events, err := qu.EventStore.GetAggEvents(
+		query.AggregateID,
+		query.AggregateVersion,
+		query.YearBucket,
+		aggMetaVersion,
+	)
 	if err != nil {
 		err = errors.Wrap(err, "Error While Fetching AggregateEvents")
 		return nil, err
@@ -41,20 +64,30 @@ func (qu *QueryUtil) QueryHandler(
 }
 
 // CreateBatch produces the provided events in chunks of sizes set as per the env-var
-// "KAFKA_EVENT_BATCH_SIZE". If this value is missing, the default batch value if 6.
+// "KAFKA_EVENT_BATCH_SIZE". If this value is missing, the default batch value is 6.
 func (qu *QueryUtil) CreateBatch(
-	correlationID uuuid.UUID,
 	aggID int8,
+	correlationID uuuid.UUID,
 	events []model.Event,
-) []model.KafkaResponse {
-	batches := make([]model.KafkaResponse, 0)
+) []model.Document {
+	batches := make([]model.Document, 0)
 
-	// Sort events in scending order of their Nano-Timestamps
+	qu.Logger.D(tlog.Entry{
+		Description: "Sorting events. Events before sort:",
+	}, events)
+	// Sort events in ascending order of their Versions and Nano-Times
 	sort.Slice(events, func(i, j int) bool {
-		ti := events[i].NanoTime
-		tj := events[j].NanoTime
+		ti := events[i].Version
+		tj := events[j].Version
+		if ti == tj {
+			ti = events[i].NanoTime
+			tj = events[j].NanoTime
+		}
 		return ti < tj
 	})
+	qu.Logger.D(tlog.Entry{
+		Description: "Sorting events. Events after sort:",
+	}, events)
 
 	for i := 0; i < len(events); i += qu.BatchSize {
 		batchEndIndex := i + qu.BatchSize
@@ -72,12 +105,22 @@ func (qu *QueryUtil) CreateBatch(
 			errCode = 1
 		}
 
-		batches = append(batches, model.KafkaResponse{
-			AggregateID:   aggID,
-			CorrelationID: correlationID,
-			ErrorCode:     errCode,
+		cid, err := uuuid.NewV4()
+		if err != nil {
+			err = errors.Wrap(err, "Error generating document-uuid")
+			errStr = err.Error()
+			errCode = 1
+			qu.Logger.E(tlog.Entry{
+				ErrorCode:   int(errCode),
+				Description: errStr,
+			})
+		}
+		batches = append(batches, model.Document{
+			CorrelationID: cid,
+			Data:          batchJSON,
 			Error:         errStr,
-			Result:        batchJSON,
+			ErrorCode:     errCode,
+			UUID:          correlationID,
 		})
 	}
 	return batches

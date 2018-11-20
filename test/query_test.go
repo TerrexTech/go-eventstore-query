@@ -14,9 +14,9 @@ import (
 	"github.com/Shopify/sarama"
 	"github.com/TerrexTech/uuuid"
 
+	"github.com/TerrexTech/go-common-models/bootstrap"
+	"github.com/TerrexTech/go-common-models/model"
 	"github.com/TerrexTech/go-commonutils/commonutil"
-	"github.com/TerrexTech/go-eventstore-models/bootstrap"
-	"github.com/TerrexTech/go-eventstore-models/model"
 	"github.com/TerrexTech/go-kafkautils/kafka"
 	"github.com/joho/godotenv"
 	. "github.com/onsi/ginkgo"
@@ -29,7 +29,7 @@ import (
 func TestEventQuery(t *testing.T) {
 	// Load environment-file.
 	// Env vars will be read directly from environment if this file fails loading
-	err := godotenv.Load()
+	err := godotenv.Load("../.env")
 	if err != nil {
 		err = errors.Wrap(err,
 			".env file not found, env-vars will be read as set in environment",
@@ -47,7 +47,7 @@ func TestEventQuery(t *testing.T) {
 
 		"KAFKA_BROKERS",
 		"KAFKA_CONSUMER_GROUP",
-		"KAFKA_CONSUMER_TOPICS",
+		"KAFKA_CONSUMER_TOPIC",
 		"KAFKA_RESPONSE_TOPIC",
 	)
 
@@ -89,7 +89,7 @@ var _ = Describe("EventQuery", func() {
 				UserUUID:    uuid,
 				NanoTime:    time.Now().UnixNano(),
 				UUID:        uuid,
-				EventAction: "insert",
+				Action:      "insert-test",
 			}
 			err = <-eventTable.AsyncInsert(mockEvent)
 			Expect(err).ToNot(HaveOccurred())
@@ -119,7 +119,7 @@ var _ = Describe("EventQuery", func() {
 
 			brokers = commonutil.ParseHosts(os.Getenv("KAFKA_BROKERS"))
 			consumerGroupName = "test-consumer"
-			consumerTopic := os.Getenv("KAFKA_CONSUMER_TOPICS")
+			consumerTopic := os.Getenv("KAFKA_CONSUMER_TOPIC")
 
 			config := &kafka.ProducerConfig{
 				KafkaBrokers: *brokers,
@@ -138,11 +138,15 @@ var _ = Describe("EventQuery", func() {
 				YearBucket:       mockEvent.YearBucket,
 				UUID:             uuid,
 			}
+
+			respTopic := os.Getenv("KAFKA_RESPONSE_TOPIC")
+
 			responseTopic = fmt.Sprintf(
 				"%s.%d",
-				os.Getenv("KAFKA_RESPONSE_TOPIC"),
+				respTopic,
 				mockEventStoreQuery.AggregateID,
 			)
+
 			metaAggVersion := int64(50)
 
 			// Create event-meta table for controlling event-versions
@@ -207,18 +211,17 @@ var _ = Describe("EventQuery", func() {
 					defer GinkgoRecover()
 					// Unmarshal the Kafka-Response
 					log.Println("An Event was received, now verifying")
-					response := &model.KafkaResponse{}
+					response := &model.Document{}
 					err := json.Unmarshal(msg.Value, response)
 					Expect(err).ToNot(HaveOccurred())
 
-					if response.UUID == mockEventStoreQuery.UUID {
-						Expect(response.CorrelationID).To(Equal(mockEventStoreQuery.CorrelationID))
+					if response.UUID == mockEventStoreQuery.CorrelationID {
 						Expect(response.Error).To(BeEmpty())
 						log.Println("Event matched expectation")
 
 						// Unmarshal the Result from Kafka-Response
 						events := []model.Event{}
-						err = json.Unmarshal(response.Result, &events)
+						err = json.Unmarshal(response.Data, &events)
 						Expect(err).ToNot(HaveOccurred())
 						return true
 					}

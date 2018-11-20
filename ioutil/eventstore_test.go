@@ -6,12 +6,14 @@ import (
 	"reflect"
 	"time"
 
+	"github.com/TerrexTech/go-eventstore-query/mock"
+
 	"github.com/TerrexTech/uuuid"
 
 	csndra "github.com/TerrexTech/go-cassandrautils/cassandra"
+	"github.com/TerrexTech/go-common-models/bootstrap"
+	"github.com/TerrexTech/go-common-models/model"
 	"github.com/TerrexTech/go-commonutils/commonutil"
-	"github.com/TerrexTech/go-eventstore-models/bootstrap"
-	"github.com/TerrexTech/go-eventstore-models/model"
 	cql "github.com/gocql/gocql"
 
 	. "github.com/onsi/ginkgo"
@@ -111,26 +113,27 @@ var _ = Describe("EventStore", func() {
 			err := <-eventMetaTable.AsyncInsert(eventMeta)
 			Expect(err).ToNot(HaveOccurred())
 
-			eventStore, err = NewEventStore(eventTable, eventMetaTable, 0)
+			logger := &mock.Logger{}
+			eventStore, err = NewEventStore(eventTable, eventMetaTable, logger, 0)
 			Expect(err).ToNot(HaveOccurred())
 		})
 
 		It("should return aggregate meta-version", func() {
-			query := &model.EventStoreQuery{
+			q := &model.EventStoreQuery{
 				AggregateID:      aggID,
 				AggregateVersion: 43,
 			}
-			ver, err := eventStore.GetAggMetaVersion(query)
+			ver, err := eventStore.GetAggMetaVersion(q.AggregateID)
 			Expect(err).ToNot(HaveOccurred())
 
-			Expect(ver).To(Equal(query.AggregateVersion))
+			Expect(ver).To(Equal(q.AggregateVersion))
 		})
 
 		It("should return error if AggregateID is not specified", func() {
-			query := &model.EventStoreQuery{
+			q := &model.EventStoreQuery{
 				AggregateVersion: 43,
 			}
-			ver, err := eventStore.GetAggMetaVersion(query)
+			ver, err := eventStore.GetAggMetaVersion(q.AggregateID)
 			Expect(err).To(HaveOccurred())
 			Expect(ver).To(Equal(int64(-1)))
 		})
@@ -138,11 +141,11 @@ var _ = Describe("EventStore", func() {
 		It(
 			"should return error if no matching record were found with secified AggregateID",
 			func() {
-				query := &model.EventStoreQuery{
+				q := &model.EventStoreQuery{
 					AggregateID:      43,
 					AggregateVersion: 98,
 				}
-				ver, err := eventStore.GetAggMetaVersion(query)
+				ver, err := eventStore.GetAggMetaVersion(q.AggregateID)
 				Expect(err).To(HaveOccurred())
 				Expect(ver).To(Equal(int64(-1)))
 			},
@@ -155,7 +158,7 @@ var _ = Describe("EventStore", func() {
 					AggregateID:      aggID,
 					AggregateVersion: 43,
 				}
-				ver, err := eventStore.GetAggMetaVersion(query)
+				ver, err := eventStore.GetAggMetaVersion(query.AggregateID)
 				Expect(err).ToNot(HaveOccurred())
 				Expect(ver).To(Equal(query.AggregateVersion))
 
@@ -203,7 +206,7 @@ var _ = Describe("EventStore", func() {
 				UserUUID:    uuid,
 				NanoTime:    time.Now().UnixNano(),
 				UUID:        uuid,
-				EventAction: "insert",
+				Action:      "insertTest",
 			}
 			err = <-eventTable.AsyncInsert(&mockEvent)
 			Expect(err).ToNot(HaveOccurred())
@@ -215,17 +218,23 @@ var _ = Describe("EventStore", func() {
 			err = <-eventTable.AsyncInsert(&mockEvent)
 			Expect(err).ToNot(HaveOccurred())
 
-			eventtore, err = NewEventStore(eventTable, eventMetaTable, 0)
+			logger := &mock.Logger{}
+			eventtore, err = NewEventStore(eventTable, eventMetaTable, logger, 0)
 			Expect(err).ToNot(HaveOccurred())
 		})
 
 		It("should return new events for Aggregate", func() {
-			query := &model.EventStoreQuery{
+			q := &model.EventStoreQuery{
 				AggregateID:      aggID,
 				AggregateVersion: 10,
 				YearBucket:       2018,
 			}
-			events, err := eventtore.GetAggEvents(query, 40)
+			events, err := eventtore.GetAggEvents(
+				q.AggregateID,
+				q.AggregateVersion,
+				q.YearBucket,
+				40,
+			)
 			Expect(err).ToNot(HaveOccurred())
 
 			Expect(events).To(HaveLen(2))
@@ -239,19 +248,21 @@ var _ = Describe("EventStore", func() {
 			Expect(reflect.DeepEqual(e1, mockEvent)).To(BeTrue())
 		})
 
-		It("should throw error if AggregateID is not specified", func() {
-			query := &model.EventStoreQuery{
-				AggregateVersion: 10,
-			}
-			_, err := eventtore.GetAggEvents(query, 40)
+		It("should return error if AggregateID is not specified", func() {
+			_, err := eventtore.GetAggEvents(0, 12, 2018, 40)
 			Expect(err).To(HaveOccurred())
 		})
 
-		It("should throw error if AggregateVersion is not specified", func() {
-			query := &model.EventStoreQuery{
+		It("should return error if AggregateVersion is not specified", func() {
+			q := &model.EventStoreQuery{
 				AggregateID: aggID,
 			}
-			_, err := eventtore.GetAggEvents(query, 40)
+			_, err := eventtore.GetAggEvents(
+				q.AggregateID,
+				q.AggregateVersion,
+				q.YearBucket,
+				40,
+			)
 			Expect(err).To(HaveOccurred())
 		})
 	})
