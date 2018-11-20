@@ -4,15 +4,18 @@ import (
 	"fmt"
 
 	csndra "github.com/TerrexTech/go-cassandrautils/cassandra"
-	"github.com/TerrexTech/go-eventstore-models/model"
+	"github.com/TerrexTech/go-common-models/model"
+	tlog "github.com/TerrexTech/go-logtransport/log"
 	"github.com/pkg/errors"
 )
 
 // EventStore provides convenience functions for getting Aggregate data.
 type EventStore interface {
-	GetAggMetaVersion(eventStoreQuery *model.EventStoreQuery) (int64, error)
+	GetAggMetaVersion(aggregateID int8) (int64, error)
 	GetAggEvents(
-		eventStoreQuery *model.EventStoreQuery,
+		aggID int8,
+		aggVersion int64,
+		yearBucket int16,
 		eventMetaVersion int64,
 	) ([]model.Event, error)
 }
@@ -22,12 +25,14 @@ type eventStore struct {
 	eventMetaTable   *csndra.Table
 	eventTable       *csndra.Table
 	metaPartitionKey int8
+	logger           tlog.Logger
 }
 
 // NewEventStore creates an EventStore.
 func NewEventStore(
 	eventTable *csndra.Table,
 	eventMetaTable *csndra.Table,
+	logger tlog.Logger,
 	metaPartitionKey int8,
 ) (EventStore, error) {
 	if eventTable == nil {
@@ -36,37 +41,51 @@ func NewEventStore(
 	if eventMetaTable == nil {
 		return nil, errors.New("eventMetaTable cannot be nil")
 	}
+	if logger == nil {
+		return nil, errors.New("logger cannot be nil")
+	}
 
 	return &eventStore{
 		eventTable:       eventTable,
 		eventMetaTable:   eventMetaTable,
+		logger:           logger,
 		metaPartitionKey: metaPartitionKey,
 	}, nil
 }
 
 // GetAggMetaVersion gets the AggregateVersion from Events-Meta table.
-func (es *eventStore) GetAggMetaVersion(
-	eventStoreQuery *model.EventStoreQuery,
-) (int64, error) {
-	aggID := eventStoreQuery.AggregateID
+func (es *eventStore) GetAggMetaVersion(aggID int8) (int64, error) {
 	if aggID == 0 {
 		return -1, errors.New("AggregateID not specified")
 	}
 
+	es.logger.D(tlog.Entry{
+		Description: fmt.Sprintf("Getting meta-version for AggregateID: %d", aggID),
+	})
 	resultsBind := []model.EventMeta{}
 	partnCol, err := es.eventMetaTable.Column("partitionKey")
 	if err != nil {
-		return -1, fmt.Errorf(
-			"Error getting PartitionKey column from MetaTable for AggregateID %d",
-			aggID,
+		err = errors.Wrapf(
+			err,
+			"Error getting PartitionKey column from MetaTable for AggregateID: %d", aggID,
 		)
+		es.logger.E(tlog.Entry{
+			Description: err.Error(),
+			ErrorCode:   1,
+		})
+		return -1, err
 	}
 	aggIDCol, err := es.eventMetaTable.Column("aggregateID")
 	if err != nil {
-		return -1, fmt.Errorf(
-			"Error getting AggregateID column from MetaTable for AggregateID %d",
-			aggID,
+		err = errors.Wrapf(
+			err,
+			"Error getting AggregateID column from MetaTable for AggregateID: %d", aggID,
 		)
+		es.logger.E(tlog.Entry{
+			Description: err.Error(),
+			ErrorCode:   1,
+		})
+		return -1, err
 	}
 
 	_, err = es.eventMetaTable.Select(csndra.SelectParams{
@@ -77,6 +96,13 @@ func (es *eventStore) GetAggMetaVersion(
 		},
 		SelectColumns: es.eventMetaTable.Columns(),
 	})
+	es.logger.D(tlog.Entry{
+		Description: fmt.Sprintf(
+			"Getting MetaVersion using params: PrtnKey: %d | AggID: %d",
+			es.metaPartitionKey,
+			aggID,
+		),
+	}, resultsBind)
 
 	if err != nil {
 		err = errors.Wrap(err, "Error Fetching AggregateVersion from EventMeta")
@@ -86,6 +112,10 @@ func (es *eventStore) GetAggMetaVersion(
 	if len(resultsBind) == 0 {
 		err = fmt.Errorf("no Aggregates found with ID: %d", aggID)
 		err = errors.Wrap(err, "Error Fetching AggregateVersion from EventMeta")
+		es.logger.E(tlog.Entry{
+			Description: err.Error(),
+			ErrorCode:   1,
+		})
 		return -1, err
 	}
 
@@ -99,21 +129,34 @@ func (es *eventStore) GetAggMetaVersion(
 		return -1, err
 	}
 
+	es.logger.D(tlog.Entry{
+		Description: fmt.Sprintf("Updated MetaVersion as: %d", result.AggregateVersion),
+	})
 	return metaVersion, nil
 }
 
 // GetAggEvents gets the AggregateEvents from Events table.
 func (es *eventStore) GetAggEvents(
-	eventStoreQuery *model.EventStoreQuery,
+	aggID int8,
+	aggVersion int64,
+	yearBucket int16,
 	eventMetaVersion int64,
 ) ([]model.Event, error) {
-	aggID := eventStoreQuery.AggregateID
 	if aggID == 0 {
-		return nil, errors.New("AggregateID not specified")
+		err := errors.New("AggregateID not specified")
+		es.logger.E(tlog.Entry{
+			Description: err.Error(),
+			ErrorCode:   1,
+		})
+		return nil, err
 	}
-	aggVersion := eventStoreQuery.AggregateVersion
 	if aggVersion == 0 {
-		return nil, fmt.Errorf("AggregateVersion not specified for AggregateID: %d", aggID)
+		err := fmt.Errorf("AggregateVersion not specified for AggregateID: %d", aggID)
+		es.logger.E(tlog.Entry{
+			Description: err.Error(),
+			ErrorCode:   1,
+		})
+		return nil, err
 	}
 
 	events := []model.Event{}
@@ -124,15 +167,24 @@ func (es *eventStore) GetAggEvents(
 	sp := csndra.SelectParams{
 		ResultsBind: &events,
 		ColumnValues: []csndra.ColumnComparator{
-			csndra.Comparator(yearBucketCol, eventStoreQuery.YearBucket).Eq(),
+			csndra.Comparator(yearBucketCol, yearBucket).Eq(),
 			csndra.Comparator(aggIDCol, aggID).Eq(),
 			csndra.Comparator(versionCol, aggVersion).Gt(),
 			csndra.Comparator(versionCol, eventMetaVersion).LtOrEq(),
 		},
 		SelectColumns: es.eventTable.Columns(),
 	}
+	es.logger.D(tlog.Entry{
+		Description: "Getting events using parameters",
+	}, sp)
 
 	_, err := es.eventTable.Select(sp)
-	err = errors.Wrap(err, "Error in GetAggEvents")
-	return events, err
+	if err != nil {
+		err = errors.Wrap(err, "Error in GetAggEvents")
+		return nil, err
+	}
+	es.logger.D(tlog.Entry{
+		Description: "Got events from EventStore",
+	}, events)
+	return events, nil
 }

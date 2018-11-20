@@ -21,8 +21,8 @@ This is achieved by comparing Aggregate's current version in its database to the
 
 Check [.env][3] and [docker-compose.yaml][4] (docker-compose is only used in tests as of yet) files for default configurations (including the Cassandra Keyspace/Table used).
 
-  [0]: https://github.com/TerrexTech/go-eventstore-models/blob/master/models/event.go
+  [0]: https://github.com/TerrexTech/go-common-models/blob/master/models/event.go
   [1]: https://github.com/TerrexTech/go-eventpersistence/
-  [2]: https://github.com/TerrexTech/go-eventstore-models/blob/master/models/kafka_response.go
+  [2]: https://github.com/TerrexTech/go-common-models/blob/master/models/kafka_response.go
   [3]: https://github.com/TerrexTech/go-eventstore-query/blob/master/.env
   [4]: https://github.com/TerrexTech/go-eventstore-query/blob/master/test/docker-compose.yaml

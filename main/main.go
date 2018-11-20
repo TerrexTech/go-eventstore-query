@@ -8,10 +8,10 @@ import (
 	"os"
 	"strconv"
 
-	"github.com/TerrexTech/go-eventstore-models/model"
+	"github.com/TerrexTech/go-common-models/model"
 
+	"github.com/TerrexTech/go-common-models/bootstrap"
 	"github.com/TerrexTech/go-commonutils/commonutil"
-	"github.com/TerrexTech/go-eventstore-models/bootstrap"
 	"github.com/TerrexTech/go-eventstore-query/ioutil"
 	"github.com/TerrexTech/go-kafkautils/kafka"
 	tlog "github.com/TerrexTech/go-logtransport/log"
@@ -44,7 +44,7 @@ func validateEnv() {
 
 		"KAFKA_BROKERS",
 		"KAFKA_CONSUMER_GROUP",
-		"KAFKA_CONSUMER_TOPICS",
+		"KAFKA_CONSUMER_TOPIC",
 		"KAFKA_RESPONSE_TOPIC",
 	)
 
@@ -61,10 +61,6 @@ func main() {
 	brokersStr := os.Getenv("KAFKA_BROKERS")
 	brokers := *commonutil.ParseHosts(brokersStr)
 
-	consumerGroup := os.Getenv("KAFKA_CONSUMER_GROUP")
-	esQueryTopicStr := os.Getenv("KAFKA_CONSUMER_TOPICS")
-	esQueryTopic := *commonutil.ParseHosts(esQueryTopicStr)
-
 	logTopic := os.Getenv("KAFKA_LOG_PRODUCER_TOPIC")
 	serviceName := os.Getenv("SERVICE_NAME")
 
@@ -76,6 +72,10 @@ func main() {
 		err = errors.Wrap(err, "Error initializing Logger")
 		log.Fatalln(err)
 	}
+
+	consumerGroup := os.Getenv("KAFKA_CONSUMER_GROUP")
+	esQueryTopicStr := os.Getenv("KAFKA_CONSUMER_TOPIC")
+	esQueryTopic := *commonutil.ParseHosts(esQueryTopicStr)
 
 	// EventStoreQuery Consumer
 	esQueryConsumer, err := kafka.NewConsumer(&kafka.ConsumerConfig{
@@ -108,7 +108,7 @@ func main() {
 	}()
 
 	// Response Producer
-	responseChan := make(chan *model.KafkaResponse)
+	responseChan := make(chan *model.Document)
 	responseProducer, err := kafka.NewProducer(prodConfig)
 	if err != nil {
 		err = errors.Wrap(err, "Error creating Kafka Response-Producer")
@@ -130,25 +130,23 @@ func main() {
 	}()
 
 	go func() {
-		for kr := range responseChan {
-			resp, err := json.Marshal(kr)
+		for doc := range responseChan {
+			resp, err := json.Marshal(doc)
 			if err != nil {
-				err = errors.Wrap(err, "ServiceResponse: Error Marshalling KafkaResponse")
+				err = errors.Wrap(err, "ServiceResponse: Error Marshalling Document")
 				logger.E(tlog.Entry{
 					Description: err.Error(),
 					ErrorCode:   1,
-				})
-				logger.D(tlog.Entry{
-					Description: "KafkaResponse received was:",
-					ErrorCode:   1,
-				}, kr)
-			} else {
-				respMsg := kafka.CreateMessage(kr.Topic, resp)
-				logger.D(tlog.Entry{
-					Description: fmt.Sprintf("Produced ESQuery-Response with ID: %s", kr.UUID),
-				}, kr)
-				responseProducer.Input() <- respMsg
+				}, doc)
+				continue
 			}
+			respMsg := kafka.CreateMessage(doc.Topic, resp)
+			logger.D(tlog.Entry{
+				Description: fmt.Sprintf(
+					"Produced ESQuery-Response with ID: %s on Topic: %s", doc.UUID, doc.Topic,
+				),
+			}, doc)
+			responseProducer.Input() <- respMsg
 		}
 	}()
 
@@ -190,6 +188,7 @@ func main() {
 	eventStore, err := ioutil.NewEventStore(
 		eventTable,
 		eventMetaTable,
+		logger,
 		int8(metaPartitionKey),
 	)
 	if err != nil {
@@ -216,9 +215,13 @@ func main() {
 		batchSize = defaultSize
 	}
 
-	queryUtil := &ioutil.QueryUtil{
-		EventStore: eventStore,
-		BatchSize:  batchSize,
+	queryUtil, err := ioutil.NewQueryUtil(eventStore, batchSize, logger)
+	if err != nil {
+		err = errors.Wrap(err, "Error creating QueryUtil")
+		logger.F(tlog.Entry{
+			Description: err.Error(),
+			ErrorCode:   1,
+		})
 	}
 	responseTopic := os.Getenv("KAFKA_RESPONSE_TOPIC")
 
@@ -226,8 +229,9 @@ func main() {
 		EventStore:    eventStore,
 		Logger:        logger,
 		QueryUtil:     queryUtil,
-		ResponseChan:  (chan<- *model.KafkaResponse)(responseChan),
+		ResponseChan:  (chan<- *model.Document)(responseChan),
 		ResponseTopic: responseTopic,
+		ServiceName:   serviceName,
 	})
 	if err != nil {
 		err = errors.Wrap(err, "Error while initializing EventHandler")
