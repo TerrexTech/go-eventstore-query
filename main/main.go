@@ -45,7 +45,6 @@ func validateEnv() {
 		"KAFKA_BROKERS",
 		"KAFKA_CONSUMER_GROUP",
 		"KAFKA_CONSUMER_TOPIC",
-		"KAFKA_RESPONSE_TOPIC",
 	)
 
 	if err != nil {
@@ -87,7 +86,7 @@ func main() {
 		err = errors.Wrap(err, "Error creating Kafka Event-Consumer")
 		logger.F(tlog.Entry{
 			Description: err.Error(),
-			ErrorCode:   1,
+			ErrorCode:   model.InternalError,
 		})
 	}
 
@@ -102,7 +101,7 @@ func main() {
 			})
 			logger.F(tlog.Entry{
 				Description: err.Error(),
-				ErrorCode:   1,
+				ErrorCode:   model.InternalError,
 			})
 		}
 	}()
@@ -114,7 +113,7 @@ func main() {
 		err = errors.Wrap(err, "Error creating Kafka Response-Producer")
 		logger.F(tlog.Entry{
 			Description: err.Error(),
-			ErrorCode:   1,
+			ErrorCode:   model.InternalError,
 		})
 	}
 
@@ -124,7 +123,7 @@ func main() {
 			err = errors.Wrap(prodErr.Err, "Kafka Producer Error")
 			logger.E(tlog.Entry{
 				Description: err.Error(),
-				ErrorCode:   1,
+				ErrorCode:   model.InternalError,
 			})
 		}
 	}()
@@ -136,7 +135,7 @@ func main() {
 				err = errors.Wrap(err, "ServiceResponse: Error Marshalling Document")
 				logger.E(tlog.Entry{
 					Description: err.Error(),
-					ErrorCode:   1,
+					ErrorCode:   model.InternalError,
 				}, doc)
 				continue
 			}
@@ -159,7 +158,7 @@ func main() {
 		err = errors.Wrap(err, "EventTable: Error getting Table")
 		logger.F(tlog.Entry{
 			Description: err.Error(),
-			ErrorCode:   1,
+			ErrorCode:   model.InternalError,
 		})
 	}
 	logger.I(tlog.Entry{
@@ -170,7 +169,7 @@ func main() {
 		err = errors.Wrap(err, "EventMetaTable: Error getting Table")
 		logger.F(tlog.Entry{
 			Description: err.Error(),
-			ErrorCode:   1,
+			ErrorCode:   model.InternalError,
 		})
 	}
 
@@ -181,7 +180,7 @@ func main() {
 		err = errors.Wrap(err, pKeyVar+" must be a valid integer")
 		logger.F(tlog.Entry{
 			Description: err.Error(),
-			ErrorCode:   1,
+			ErrorCode:   model.InternalError,
 		})
 	}
 
@@ -195,11 +194,11 @@ func main() {
 		err = errors.Wrap(err, "Error while initializing EventStore")
 		logger.F(tlog.Entry{
 			Description: err.Error(),
-			ErrorCode:   1,
+			ErrorCode:   model.InternalError,
 		})
 	}
 
-	// ======> Setup EventHandler
+	// ======> Setup ESQueryHandler
 	defaultSize := 6
 	batchSizeEnv := os.Getenv("KAFKA_EVENT_BATCH_SIZE")
 	batchSize, err := strconv.Atoi(batchSizeEnv)
@@ -207,7 +206,7 @@ func main() {
 		err = errors.Wrap(err, "Error Getting Event-Producer BatchSize")
 		logger.E(tlog.Entry{
 			Description: err.Error(),
-			ErrorCode:   1,
+			ErrorCode:   model.InternalError,
 		})
 		logger.D(tlog.Entry{
 			Description: fmt.Sprintf("Batch-Size used: %d", defaultSize),
@@ -220,24 +219,22 @@ func main() {
 		err = errors.Wrap(err, "Error creating QueryUtil")
 		logger.F(tlog.Entry{
 			Description: err.Error(),
-			ErrorCode:   1,
+			ErrorCode:   model.InternalError,
 		})
 	}
-	responseTopic := os.Getenv("KAFKA_RESPONSE_TOPIC")
 
-	handler, err := NewEventHandler(EventHandlerConfig{
-		EventStore:    eventStore,
-		Logger:        logger,
-		QueryUtil:     queryUtil,
-		ResponseChan:  (chan<- *model.Document)(responseChan),
-		ResponseTopic: responseTopic,
-		ServiceName:   serviceName,
+	handler, err := NewESQueryHandler(ESQueryHandlerConfig{
+		EventStore:   eventStore,
+		Logger:       logger,
+		QueryUtil:    queryUtil,
+		ResponseChan: (chan<- *model.Document)(responseChan),
+		ServiceName:  serviceName,
 	})
 	if err != nil {
-		err = errors.Wrap(err, "Error while initializing EventHandler")
+		err = errors.Wrap(err, "Error while initializing ESQueryHandler")
 		logger.F(tlog.Entry{
 			Description: err.Error(),
-			ErrorCode:   1,
+			ErrorCode:   model.InternalError,
 		})
 	}
 
@@ -250,7 +247,7 @@ func main() {
 		err = errors.Wrap(err, "Error while attempting to consume Events")
 		logger.F(tlog.Entry{
 			Description: err.Error(),
-			ErrorCode:   1,
+			ErrorCode:   model.InternalError,
 		})
 	}
 }

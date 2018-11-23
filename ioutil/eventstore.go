@@ -71,7 +71,7 @@ func (es *eventStore) GetAggMetaVersion(aggID int8) (int64, error) {
 		)
 		es.logger.E(tlog.Entry{
 			Description: err.Error(),
-			ErrorCode:   1,
+			ErrorCode:   model.InternalError,
 		})
 		return -1, err
 	}
@@ -83,7 +83,7 @@ func (es *eventStore) GetAggMetaVersion(aggID int8) (int64, error) {
 		)
 		es.logger.E(tlog.Entry{
 			Description: err.Error(),
-			ErrorCode:   1,
+			ErrorCode:   model.InternalError,
 		})
 		return -1, err
 	}
@@ -114,7 +114,7 @@ func (es *eventStore) GetAggMetaVersion(aggID int8) (int64, error) {
 		err = errors.Wrap(err, "Error Fetching AggregateVersion from EventMeta")
 		es.logger.E(tlog.Entry{
 			Description: err.Error(),
-			ErrorCode:   1,
+			ErrorCode:   model.InternalError,
 		})
 		return -1, err
 	}
@@ -146,7 +146,7 @@ func (es *eventStore) GetAggEvents(
 		err := errors.New("AggregateID not specified")
 		es.logger.E(tlog.Entry{
 			Description: err.Error(),
-			ErrorCode:   1,
+			ErrorCode:   model.InternalError,
 		})
 		return nil, err
 	}
@@ -154,7 +154,7 @@ func (es *eventStore) GetAggEvents(
 		err := fmt.Errorf("AggregateVersion not specified for AggregateID: %d", aggID)
 		es.logger.E(tlog.Entry{
 			Description: err.Error(),
-			ErrorCode:   1,
+			ErrorCode:   model.InternalError,
 		})
 		return nil, err
 	}
