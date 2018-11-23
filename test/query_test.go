@@ -48,7 +48,6 @@ func TestEventQuery(t *testing.T) {
 		"KAFKA_BROKERS",
 		"KAFKA_CONSUMER_GROUP",
 		"KAFKA_CONSUMER_TOPIC",
-		"KAFKA_RESPONSE_TOPIC",
 	)
 
 	if err != nil {
@@ -131,21 +130,17 @@ var _ = Describe("EventQuery", func() {
 
 			cid, err := uuuid.NewV4()
 			Expect(err).ToNot(HaveOccurred())
+
+			var aggID int8 = 1
+			responseTopic = fmt.Sprintf("test.%d", aggID)
 			mockEventStoreQuery = &model.EventStoreQuery{
-				AggregateID:      1,
+				AggregateID:      aggID,
 				AggregateVersion: 1,
 				CorrelationID:    cid,
-				YearBucket:       mockEvent.YearBucket,
+				Topic:            responseTopic,
 				UUID:             uuid,
+				YearBucket:       mockEvent.YearBucket,
 			}
-
-			respTopic := os.Getenv("KAFKA_RESPONSE_TOPIC")
-
-			responseTopic = fmt.Sprintf(
-				"%s.%d",
-				respTopic,
-				mockEventStoreQuery.AggregateID,
-			)
 
 			metaAggVersion := int64(50)
 

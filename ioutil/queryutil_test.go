@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/TerrexTech/uuuid"
+	"github.com/pkg/errors"
 
 	"github.com/TerrexTech/go-common-models/model"
 	"github.com/TerrexTech/go-eventstore-query/mock"
@@ -65,69 +66,63 @@ var _ = Describe("QueryUtil", func() {
 		mockMetaVer = 16
 	})
 
-	// Describe("QueryHandler", func() {
-	// 	It("should return events", func() {
-	// 		eventStore = &mock.MEventStore{
-	// 			MockMetaVersion: func(aggID int8) (int64, error) {
-	// 				Expect(aggID).To(Equal(mockEventStoreQuery.AggregateID))
-	// 				return mockMetaVer, nil
-	// 			},
-	// 			MockEvents: func(
-	// 				aggID int8,
-	// 				aggVersion int64,
-	// 				yearBucket int16,
-	// 				eventMetaVersion int64,
-	// 			) ([]model.Event, error) {
-	// 				Expect(aggID).To(Equal(mockEventStoreQuery.AggregateID))
-	// 				Expect(aggVersion).To(Equal(mockEventStoreQuery.AggregateVersion))
-	// 				Expect(yearBucket).To(Equal(mockEventStoreQuery.YearBucket))
-	// 				Expect(eventMetaVersion).To(Equal(mockMetaVer))
-	// 				return mockEvents, nil
-	// 			},
-	// 		}
+	Describe("QueryHandler", func() {
+		It("should return events", func() {
+			eventStore = &mock.MEventStore{
+				MockMetaVersion: func(aggID int8) (int64, error) {
+					Expect(aggID).To(Equal(mockEventStoreQuery.AggregateID))
+					return mockMetaVer, nil
+				},
+				MockEvents: func(
+					aggID int8,
+					aggVersion int64,
+					yearBucket int16,
+					eventMetaVersion int64,
+				) ([]model.Event, error) {
+					Expect(aggID).To(Equal(mockEventStoreQuery.AggregateID))
+					Expect(aggVersion).To(Equal(mockEventStoreQuery.AggregateVersion))
+					Expect(yearBucket).To(Equal(mockEventStoreQuery.YearBucket))
+					Expect(eventMetaVersion).To(Equal(mockMetaVer))
+					return mockEvents, nil
+				},
+			}
 
-	// 		qu, err := NewQueryUtil(eventStore, 6, &mock.Logger{})
-	// 		Expect(err).ToNot(HaveOccurred())
-	// 		// 0 is the partition-key. It is usually set from env var,
-	// 		// but here we just hard-code for convenience.
-	// 		qu.QueryHandler(mockEventStoreQuery)
-	// 	})
+			qu, err := NewQueryUtil(eventStore, 6, &mock.Logger{})
+			Expect(err).ToNot(HaveOccurred())
+			_, err = qu.QueryHandler(mockEventStoreQuery)
+			Expect(err).ToNot(HaveOccurred())
+		})
 
-	// 	It("should return any errors that occur while getting AggregateMetaVersion", func() {
-	// 		eventStore = &mock.MEventStore{
-	// 			MockMetaVersion: func(_ int8) (int64, error) {
-	// 				return 0, errors.New("some-error")
-	// 			},
-	// 		}
+		It("should return any errors that occur while getting AggregateMetaVersion", func() {
+			eventStore = &mock.MEventStore{
+				MockMetaVersion: func(_ int8) (int64, error) {
+					return 0, errors.New("some-error")
+				},
+			}
 
-	// 		qu, err := NewQueryUtil(eventStore, 6, &mock.Logger{})
-	// 		Expect(err).ToNot(HaveOccurred())
-	// 		_, err = qu.QueryHandler(mockEventStoreQuery)
-	// 		Expect(err).To(HaveOccurred())
-	// 	})
+			qu, err := NewQueryUtil(eventStore, 6, &mock.Logger{})
+			Expect(err).ToNot(HaveOccurred())
+			_, err = qu.QueryHandler(mockEventStoreQuery)
+			Expect(err).To(HaveOccurred())
+		})
 
-	// 	It("should return any errors that occur while getting AggregateEvents", func() {
-	// 		eventStore = &mock.MEventStore{
-	// 			MockMetaVersion: func(v int8) (int64, error) {
-	// 				Expect(v).To(Equal(mockEventStoreQuery.AggregateID))
-	// 				return mockMetaVer, nil
-	// 			},
-	// 			MockEvents: func(
-	// 				aggID int8,
-	// 				aggVersion int64,
-	// 				yearBucket int16,
-	// 				eventMetaVersion int64,
-	// 			) ([]model.Event, error) {
-	// 				return nil, errors.New("some-error")
-	// 			},
-	// 		}
+		It("should return any errors that occur while getting AggregateEvents", func() {
+			eventStore = &mock.MEventStore{
+				MockMetaVersion: func(v int8) (int64, error) {
+					Expect(v).To(Equal(mockEventStoreQuery.AggregateID))
+					return mockMetaVer, nil
+				},
+				MockEvents: func(_ int8, _ int64, _ int16, _ int64) ([]model.Event, error) {
+					return nil, errors.New("some-error")
+				},
+			}
 
-	// 		qu, err := NewQueryUtil(eventStore, 6, &mock.Logger{})
-	// 		Expect(err).ToNot(HaveOccurred())
-	// 		_, err = qu.QueryHandler(mockEventStoreQuery)
-	// 		Expect(err).To(HaveOccurred())
-	// 	})
-	// })
+			qu, err := NewQueryUtil(eventStore, 6, &mock.Logger{})
+			Expect(err).ToNot(HaveOccurred())
+			_, err = qu.QueryHandler(mockEventStoreQuery)
+			Expect(err).To(HaveOccurred())
+		})
+	})
 
 	Describe("BatchProduce", func() {
 		var responseChan = make(chan model.Document)
