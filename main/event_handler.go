@@ -147,6 +147,7 @@ func (e *esQueryHandler) ConsumeClaim(
 			// Get events
 			events, err := e.QueryUtil.QueryHandler(esQuery)
 			if err != nil {
+				session.MarkMessage(msg, "")
 				err = errors.Wrap(err, "Error Processing Query")
 				logger.E(tlog.Entry{
 					Description: err.Error(),
@@ -168,6 +169,7 @@ func (e *esQueryHandler) ConsumeClaim(
 				}, doc.Topic, doc)
 				return
 			}
+
 			batch := e.QueryUtil.CreateBatch(
 				esQuery.AggregateID,
 				esQuery.CorrelationID,
@@ -187,6 +189,7 @@ func (e *esQueryHandler) ConsumeClaim(
 
 				doc.Topic = esQuery.Topic
 				e.ResponseChan <- &doc
+				session.MarkMessage(msg, "")
 
 				if doc.Error != "" {
 					logger.E(tlog.Entry{
