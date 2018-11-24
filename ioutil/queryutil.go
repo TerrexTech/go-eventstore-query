@@ -10,32 +10,43 @@ import (
 	"github.com/pkg/errors"
 )
 
+// QueryUtilConfig is the configuration for QueryUtil.
+type QueryUtilConfig struct {
+	EOSToken string
+	// EventStore provides convenient functions to get Aggregate data.
+	EventStore  EventStore
+	BatchSize   int
+	Logger      tlog.Logger
+	ServiceName string
+}
+
 // QueryUtil handles the EventStore-Query.
 // This fetches the new Aggregate-Events, updates the Aggregate version in Events-Meta
 // table, and sends those events in batches to the Kafka response-topic.
 type QueryUtil struct {
-	// EventStore provides convenient functions to get Aggregate data.
-	EventStore EventStore
-	BatchSize  int
-	Logger     tlog.Logger
+	*QueryUtilConfig
 }
 
 // NewQueryUtil creates an QueryUtil.
-func NewQueryUtil(es EventStore, batchSize int, logger tlog.Logger) (*QueryUtil, error) {
-	if es == nil {
+func NewQueryUtil(config *QueryUtilConfig) (*QueryUtil, error) {
+	if config.EventStore == nil {
 		return nil, errors.New("config error: EventStore cannot be nil")
 	}
-	if batchSize == 0 {
+	if config.BatchSize == 0 {
 		return nil, errors.New("config error: BatchSize must be >0")
 	}
-	if logger == nil {
+	if config.EOSToken == "" {
+		return nil, errors.New("config error: EOSToken cannot be blank")
+	}
+	if config.Logger == nil {
 		return nil, errors.New("config error: Logger cannot be nil")
+	}
+	if config.ServiceName == "" {
+		return nil, errors.New("config error: ServiceName cannot be blank")
 	}
 
 	return &QueryUtil{
-		EventStore: es,
-		BatchSize:  batchSize,
-		Logger:     logger,
+		config,
 	}, nil
 }
 
@@ -89,6 +100,11 @@ func (qu *QueryUtil) CreateBatch(
 		Description: "Sorting events. Events after sort:",
 	}, events)
 
+	events = append(events, model.Event{
+		Action: qu.EOSToken,
+		Source: qu.ServiceName,
+		UUID:   correlationID,
+	})
 	for i := 0; i < len(events); i += qu.BatchSize {
 		batchEndIndex := i + qu.BatchSize
 		if batchEndIndex > len(events) {

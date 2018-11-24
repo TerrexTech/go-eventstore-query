@@ -20,6 +20,7 @@ import (
 var _ = Describe("QueryUtil", func() {
 	var (
 		eventStore          *mock.MEventStore
+		eosToken            string
 		mockEvents          []model.Event
 		mockMetaVer         int64
 		mockEventStoreQuery *model.EventStoreQuery
@@ -41,6 +42,7 @@ var _ = Describe("QueryUtil", func() {
 	}
 
 	BeforeEach(func() {
+		eosToken = os.Getenv("KAFKA_END_OF_STREAM_TOKEN")
 		mockEventStoreQuery = &model.EventStoreQuery{
 			AggregateID:      12,
 			AggregateVersion: 3,
@@ -87,7 +89,13 @@ var _ = Describe("QueryUtil", func() {
 				},
 			}
 
-			qu, err := NewQueryUtil(eventStore, 6, &mock.Logger{})
+			qu, err := NewQueryUtil(&QueryUtilConfig{
+				EOSToken:    eosToken,
+				EventStore:  eventStore,
+				BatchSize:   6,
+				Logger:      &mock.Logger{},
+				ServiceName: "test-service",
+			})
 			Expect(err).ToNot(HaveOccurred())
 			_, err = qu.QueryHandler(mockEventStoreQuery)
 			Expect(err).ToNot(HaveOccurred())
@@ -100,7 +108,13 @@ var _ = Describe("QueryUtil", func() {
 				},
 			}
 
-			qu, err := NewQueryUtil(eventStore, 6, &mock.Logger{})
+			qu, err := NewQueryUtil(&QueryUtilConfig{
+				EOSToken:    eosToken,
+				EventStore:  eventStore,
+				BatchSize:   6,
+				Logger:      &mock.Logger{},
+				ServiceName: "test-service",
+			})
 			Expect(err).ToNot(HaveOccurred())
 			_, err = qu.QueryHandler(mockEventStoreQuery)
 			Expect(err).To(HaveOccurred())
@@ -117,7 +131,13 @@ var _ = Describe("QueryUtil", func() {
 				},
 			}
 
-			qu, err := NewQueryUtil(eventStore, 6, &mock.Logger{})
+			qu, err := NewQueryUtil(&QueryUtilConfig{
+				EOSToken:    eosToken,
+				EventStore:  eventStore,
+				BatchSize:   6,
+				Logger:      &mock.Logger{},
+				ServiceName: "test-service",
+			})
 			Expect(err).ToNot(HaveOccurred())
 			_, err = qu.QueryHandler(mockEventStoreQuery)
 			Expect(err).To(HaveOccurred())
@@ -140,11 +160,21 @@ var _ = Describe("QueryUtil", func() {
 					batchSize, err := strconv.Atoi(batchSizeStr)
 					Expect(err).ToNot(HaveOccurred())
 
-					qu, err := NewQueryUtil(eventStore, batchSize, &mock.Logger{})
+					qu, err := NewQueryUtil(&QueryUtilConfig{
+						EOSToken:    eosToken,
+						EventStore:  eventStore,
+						BatchSize:   batchSize,
+						Logger:      &mock.Logger{},
+						ServiceName: "test-service",
+					})
 					Expect(err).ToNot(HaveOccurred())
 					// Listener for batch events (batch events generated below)
 					var wg sync.WaitGroup
 					wg.Add(1)
+
+					cid, err := uuuid.NewV4()
+					Expect(err).ToNot(HaveOccurred())
+
 					// Here we get the Document from the response channel, unmarshal events array
 					// from it, and then match the resulting events with mock-events slice
 					go func() {
@@ -176,6 +206,10 @@ var _ = Describe("QueryUtil", func() {
 							}
 							// All events matched, good stuff
 							if matchCount == len(mockEvents) {
+								// Final Event should have EOSToken as its Action
+								eosEvent := resEvents[len(resEvents)-1]
+								Expect(eosEvent.Action).To(Equal(eosToken))
+								Expect(eosEvent.UUID).To(Equal(cid))
 								close(responseChan)
 							}
 						}
@@ -183,7 +217,7 @@ var _ = Describe("QueryUtil", func() {
 					}()
 
 					// BatchEvents produced here
-					docs := qu.CreateBatch(37, uuuid.UUID{}, mockEvents)
+					docs := qu.CreateBatch(37, cid, mockEvents)
 					for _, doc := range docs {
 						responseChan <- doc
 					}
