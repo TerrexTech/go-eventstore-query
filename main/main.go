@@ -45,6 +45,7 @@ func validateEnv() {
 		"KAFKA_BROKERS",
 		"KAFKA_CONSUMER_GROUP",
 		"KAFKA_CONSUMER_TOPIC",
+		"KAFKA_END_OF_STREAM_TOKEN",
 	)
 
 	if err != nil {
@@ -214,7 +215,14 @@ func main() {
 		batchSize = defaultSize
 	}
 
-	queryUtil, err := ioutil.NewQueryUtil(eventStore, batchSize, logger)
+	eosToken := os.Getenv("KAFKA_END_OF_STREAM_TOKEN")
+	queryUtil, err := ioutil.NewQueryUtil(&ioutil.QueryUtilConfig{
+		BatchSize:   batchSize,
+		EOSToken:    eosToken,
+		EventStore:  eventStore,
+		Logger:      logger,
+		ServiceName: serviceName,
+	})
 	if err != nil {
 		err = errors.Wrap(err, "Error creating QueryUtil")
 		logger.F(tlog.Entry{

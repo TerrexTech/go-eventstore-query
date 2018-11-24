@@ -48,6 +48,7 @@ func TestEventQuery(t *testing.T) {
 		"KAFKA_BROKERS",
 		"KAFKA_CONSUMER_GROUP",
 		"KAFKA_CONSUMER_TOPIC",
+		"KAFKA_END_OF_STREAM_TOKEN",
 	)
 
 	if err != nil {
@@ -66,6 +67,8 @@ var _ = Describe("EventQuery", func() {
 		responseTopic     string
 
 		mockEventStoreQuery *model.EventStoreQuery
+		eventStoreQueryCID  uuuid.UUID
+		eosToken            string
 	)
 
 	BeforeSuite(func() {
@@ -128,7 +131,7 @@ var _ = Describe("EventQuery", func() {
 			kafkaProducer, err := kafka.NewProducer(config)
 			Expect(err).ToNot(HaveOccurred())
 
-			cid, err := uuuid.NewV4()
+			eventStoreQueryCID, err = uuuid.NewV4()
 			Expect(err).ToNot(HaveOccurred())
 
 			var aggID int8 = 1
@@ -136,7 +139,7 @@ var _ = Describe("EventQuery", func() {
 			mockEventStoreQuery = &model.EventStoreQuery{
 				AggregateID:      aggID,
 				AggregateVersion: 1,
-				CorrelationID:    cid,
+				CorrelationID:    eventStoreQueryCID,
 				Topic:            responseTopic,
 				UUID:             uuid,
 				YearBucket:       mockEvent.YearBucket,
@@ -165,10 +168,13 @@ var _ = Describe("EventQuery", func() {
 
 			mockEventQueryInput <- kafka.CreateMessage(consumerTopic, testEventQuery)
 			log.Println("Produced mock-eventstore-query on consumer-topic")
+
+			eosToken = os.Getenv(
+				"KAFKA_END_OF_STREAM_TOKEN")
 		})
 	})
 
-	Context("An event is produced", func() {
+	Context("An EventQuery is produced", func() {
 		var responseConsumer *kafka.Consumer
 
 		BeforeEach(func() {
@@ -214,11 +220,18 @@ var _ = Describe("EventQuery", func() {
 						Expect(response.Error).To(BeEmpty())
 						log.Println("Event matched expectation")
 
-						// Unmarshal the Result from Kafka-Response
 						events := []model.Event{}
 						err = json.Unmarshal(response.Data, &events)
 						Expect(err).ToNot(HaveOccurred())
-						return true
+
+						// Ensure we get the EOSEvent
+						for _, event := range events {
+							if event.Action == eosToken {
+								log.Println("Event has EOS Action")
+								Expect(event.UUID).To(Equal(eventStoreQueryCID))
+								return true
+							}
+						}
 					}
 					return false
 				}
